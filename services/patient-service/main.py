@@ -8,6 +8,7 @@ from sqlalchemy import select, and_, or_, func
 from pydantic import BaseModel, Field, field_validator, computed_field
 import models
 from database import get_db, init_db
+from security import UserRole, require_roles, require_roles_or_internal
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -206,15 +207,9 @@ async def health_check(db: AsyncSession = Depends(get_db)):
 
 @app.get("/records", response_model=List[PatientResponse])
 async def get_patient_records(
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    if not x_user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Direct internal access forbidden. Route through the API Gateway."
-        )
-
     result = await db.execute(select(models.Patient).order_by(models.Patient.patient_id.desc()))
     patients = result.scalars().all()
     return patients
@@ -227,16 +222,9 @@ async def search_patients(
     last_name: Optional[str] = Query(None),
     date_of_birth: Optional[date] = Query(None),
     phone: Optional[str] = Query(None),
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Multi-field Patient Search:
-    Searches patients using first name, last name, date of birth, and/or phone.
-    Maintains separate patient identities for people with identical names but different DOBs.
-    """
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
 
     stmt = select(models.Patient)
     filters = []
@@ -263,15 +251,13 @@ async def search_patients(
 @app.post("/register", response_model=PatientResponse, status_code=status.HTTP_201_CREATED)
 async def register_patient(
     patient_in: PatientCreate,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Registers a permanent patient identity.
     If full demographic match (first_name, last_name, DOB) already exists, returns existing patient_id.
     """
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
 
     # Handle legacy name & age conversion if first_name/last_name/DOB are omitted
     first_name = patient_in.first_name
@@ -333,11 +319,9 @@ async def register_patient(
 @app.get("/verify/{patient_id}")
 async def verify_patient(
     patient_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
 
     result = await db.execute(
         select(models.Patient).where(models.Patient.patient_id == patient_id)
@@ -365,11 +349,9 @@ async def verify_patient(
 @app.get("/patient/{patient_id}", response_model=PatientResponse)
 async def get_patient_by_id(
     patient_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
 
     result = await db.execute(
         select(models.Patient).where(models.Patient.patient_id == patient_id)
@@ -387,15 +369,13 @@ async def get_patient_by_id(
 @app.post("/encounters/create", response_model=AdmissionResponse, status_code=status.HTTP_201_CREATED)
 async def create_admission(
     admission_in: AdmissionCreate,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Creates a new hospital stay (Admission) for a permanent patient.
     Checks that the patient exists and does not already have an active stay (discharge is NULL).
     """
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
 
     # 1. Verify Patient exists
     patient = await db.get(models.Patient, admission_in.patient_id)
@@ -431,7 +411,7 @@ async def create_admission(
 @app.get("/encounters/active/{patient_id}", response_model=Optional[AdmissionResponse])
 async def get_active_admission(
     patient_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
     """Retrieves the active admission (discharge_datetime is NULL) for a patient if one exists."""
@@ -449,7 +429,7 @@ async def get_active_admission(
 @app.get("/encounters/verify/{admission_id}")
 async def verify_admission(
     admission_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
     """Inter-service validation endpoint for Bed Service to verify an admission is valid and active."""
@@ -484,7 +464,7 @@ async def verify_admission(
 @app.get("/encounters/{admission_id}", response_model=AdmissionResponse)
 async def get_admission_by_id(
     admission_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
     admission = await db.get(models.Admission, admission_id)
@@ -495,9 +475,9 @@ async def get_admission_by_id(
 
 @app.get("/admissions/patient/{patient_id}", response_model=List[AdmissionResponse])
 @app.get("/encounters/patient/{patient_id}", response_model=List[AdmissionResponse])
-async def get_patient_admissions_history(
+async def get_admissions_by_patient(
     patient_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
     """Preserves full historical timeline of all admissions for a patient."""
@@ -512,7 +492,7 @@ async def get_patient_admissions_history(
 @app.put("/encounters/discharge/{admission_id}")
 async def discharge_admission(
     admission_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -549,15 +529,13 @@ async def discharge_admission(
 async def assign_nurse_to_admission(
     admission_id: int,
     assignment_in: NurseAssignmentCreate,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Assigns a nurse to the patient's active admission.
     Completes any previous active nurse assignment (shift handover).
     """
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
 
     admission = await db.get(models.Admission, admission_id)
     if not admission or admission.discharge_datetime is not None:
@@ -591,7 +569,7 @@ async def assign_nurse_to_admission(
 @app.put("/encounters/nurse-assignments/{assignment_id}/complete")
 async def complete_nurse_assignment(
     assignment_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
     """Closes a nursing assignment at the end of a shift without deleting history."""
@@ -610,7 +588,7 @@ async def complete_nurse_assignment(
 @app.get("/encounters/{admission_id}/nurse-assignments", response_model=List[NurseAssignmentResponse])
 async def get_admission_nurse_assignments(
     admission_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
     """Retrieves all historical and active nurse assignments for an admission."""

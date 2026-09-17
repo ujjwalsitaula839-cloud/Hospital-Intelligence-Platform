@@ -69,6 +69,7 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL}  
       - BED_SERVICE_URL=${BED_SERVICE_URL:-http://hip-bed-service:8003}
+      - INTERNAL_SERVICE_SECRET=${INTERNAL_SERVICE_SECRET}
     networks:
       - hip-network
     depends_on:
@@ -88,6 +89,7 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL:-redis://hip-redis:6379}  
       - PATIENT_SERVICE_URL=${PATIENT_SERVICE_URL:-http://hip-patient-service:8002}
+      - INTERNAL_SERVICE_SECRET=${INTERNAL_SERVICE_SECRET}
     networks:
       - hip-network
     depends_on:

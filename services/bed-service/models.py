@@ -27,7 +27,7 @@ class BedAllocation(Base):
     allocation_id = Column(Integer, primary_key=True, index=True)
     bed_id = Column(Integer, ForeignKey("bed.bed_id", ondelete="RESTRICT"), nullable=False, index=True)
     admission_id = Column(Integer, index=True, nullable=False)  # Logical FK to admission.admission_id
-    assigned_by_personnel_id = Column(Integer, nullable=True)  # Logical FK to personnel.personnel_id
+    assigned_by_personnel_id = Column(Integer, nullable=False)  # Logical FK to personnel.personnel_id
     status = Column(String(30), default="RESERVED", index=True, nullable=False)  # RESERVED, OCCUPIED, COMPLETED, TRANSFERRED, CANCELLED
     start_datetime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     end_datetime = Column(DateTime(timezone=True), nullable=True)
@@ -88,7 +88,7 @@ class EquipmentAllocation(Base):
     equipment_allocation_id = Column(Integer, primary_key=True, index=True)
     equipment_id = Column(Integer, ForeignKey("equipment.equipment_id", ondelete="RESTRICT"), nullable=False, index=True)
     admission_id = Column(Integer, index=True, nullable=False)  # Logical FK to admission.admission_id
-    allocated_by_personnel_id = Column(Integer, nullable=True)  # Logical FK to personnel.personnel_id
+    allocated_by_personnel_id = Column(Integer, nullable=False)  # Logical FK to personnel.personnel_id
     start_datetime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     end_datetime = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(30), default="ACTIVE", index=True, nullable=False)  # ACTIVE, RELEASED
@@ -112,7 +112,7 @@ class CleaningTask(Base):
     cleaning_id = Column(Integer, primary_key=True, index=True)
     bed_id = Column(Integer, ForeignKey("bed.bed_id", ondelete="RESTRICT"), nullable=False, index=True)
     allocation_id = Column(Integer, ForeignKey("bed_allocation.allocation_id", ondelete="SET NULL"), nullable=True, index=True)
-    personnel_id = Column(Integer, nullable=True)  # Logical FK to personnel.personnel_id
+    personnel_id = Column(Integer, nullable=True)  # Logical FK to personnel.personnel_id (NULL while PENDING, required when IN_PROGRESS/COMPLETED)
     status = Column(String(30), default="PENDING", index=True, nullable=False)  # PENDING, IN_PROGRESS, COMPLETED, VERIFIED
     requested_datetime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     started_datetime = Column(DateTime(timezone=True), nullable=True)

@@ -229,15 +229,13 @@ async def forward_request(request: Request, service_name: str, path: str):
     has_body = request.method.lower() in BODY_METHODS
     body = await request.body() if has_body else None
 
-    # Filter incoming hop-by-hop headers
+    # Filter incoming hop-by-hop headers AND strip ALL untrusted identity/internal headers
     headers_to_forward = {
         k: v for k, v in request.headers.items() 
         if k.lower() not in HOP_BY_HOP_HEADERS
+        and not k.lower().startswith("x-user-")
+        and not k.lower().startswith("x-internal-")
     }
-
-    # Strip untrusted user headers to prevent spoofing
-    for h in ["x-user-id", "x-user-username", "x-user-role", "x-user-department", "x-user-fullname"]:
-        headers_to_forward.pop(h, None)
 
     # Pass client origin IP for audit logging
     if request.client:
