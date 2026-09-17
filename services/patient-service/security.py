@@ -1,25 +1,14 @@
-"""
-Role-Based Access Control (RBAC) Security Dependencies for Patient & Admission Service.
-
-Provides:
-- UserRole enum (synced with auth-service accepted values)
-- require_roles() FastAPI dependency factory for endpoint authorization
-- require_roles_or_internal() FastAPI dependency factory for endpoints that accept
-  either authenticated end-user roles OR verified inter-service calls from the mesh
-"""
-
-import os
-import hmac
 from enum import Enum
-from typing import Dict, Any, Optional
-from fastapi import Header, HTTPException, status
+import hmac
+import os
+from typing import Any, Dict, Optional
 
+from fastapi import Header, HTTPException, status
 
 INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
 
 
 class UserRole(str, Enum):
-    """Typed role constants synchronized with auth-service/schemas.py validate_role()."""
     ADMIN = "ADMIN"
     DOCTOR = "DOCTOR"
     NURSE = "NURSE"
@@ -28,14 +17,10 @@ class UserRole(str, Enum):
 
 
 def require_roles(*allowed_roles: UserRole):
-    """
-    FastAPI dependency factory that enforces role-based access control.
-    
-    Reads X-User-Id and X-User-Role headers injected by the API Gateway
-    (after JWT verification). Returns authenticated user context dict.
-    
-    ADMIN role is always authorized regardless of the allowed_roles set.
-    """
+    """FastAPI dependency enforcing role permissions with universal ADMIN override."""
+    # Invariant: ADMIN is always authorized across all guarded routes
+    allowed_values = {r.value if isinstance(r, UserRole) else str(r).upper() for r in allowed_roles}
+    allowed_values.add(UserRole.ADMIN.value)
 
     def role_checker(
         x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
@@ -44,25 +29,18 @@ def require_roles(*allowed_roles: UserRole):
         x_user_department: Optional[str] = Header(None, alias="X-User-Department"),
         x_user_fullname: Optional[str] = Header(None, alias="X-User-Fullname"),
     ) -> Dict[str, Any]:
-        # 1. Verify authentication
         if not x_user_id or not x_user_role:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required: missing verified identity headers."
             )
 
-        # 2. Build allowed values set with universal ADMIN override
-        allowed_values = {r.value if isinstance(r, UserRole) else str(r).upper() for r in allowed_roles}
-        allowed_values.add(UserRole.ADMIN.value)
-
-        # 3. Authorize role
         if x_user_role.upper() not in allowed_values:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied: role '{x_user_role}' does not have the required permissions for this action."
+                detail=f"Access denied: role '{x_user_role}' does not have required permissions."
             )
 
-        # 4. Return verified user context
         return {
             "user_id": int(x_user_id),
             "role": x_user_role.upper(),
@@ -75,16 +53,9 @@ def require_roles(*allowed_roles: UserRole):
 
 
 def require_roles_or_internal(*allowed_roles: UserRole):
-    """
-    FastAPI dependency factory for endpoints that accept EITHER:
-    1. Authenticated end-user roles (via Gateway-injected X-User-* headers), OR
-    2. Verified inter-service calls carrying a valid INTERNAL_SERVICE_SECRET token.
-    
-    Used for inter-service endpoints like /admissions/verify/{id} and
-    /admissions/discharge/{id} that bed-service calls internally.
-    
-    Uses hmac.compare_digest for timing-attack resistant secret comparison.
-    """
+    """Authorizes either end-user roles or verified inter-service mesh calls."""
+    allowed_values = {r.value if isinstance(r, UserRole) else str(r).upper() for r in allowed_roles}
+    allowed_values.add(UserRole.ADMIN.value)
 
     def dual_checker(
         x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
@@ -94,8 +65,7 @@ def require_roles_or_internal(*allowed_roles: UserRole):
         x_user_fullname: Optional[str] = Header(None, alias="X-User-Fullname"),
         x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
     ) -> Dict[str, Any]:
-
-        # Path 1: Trusted internal mesh call (timing-attack resistant comparison)
+        # Invariant: hmac.compare_digest prevents timing attacks when validating mesh secrets
         if x_internal_token and INTERNAL_SERVICE_SECRET:
             if hmac.compare_digest(x_internal_token, INTERNAL_SERVICE_SECRET):
                 return {
@@ -107,21 +77,16 @@ def require_roles_or_internal(*allowed_roles: UserRole):
                     "internal": True,
                 }
 
-        # Path 2: Standard end-user role check
         if not x_user_id or not x_user_role:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required: missing verified identity headers or valid internal service token."
+                detail="Authentication required: missing verified identity headers or internal service token."
             )
-
-        # Build allowed values set with universal ADMIN override
-        allowed_values = {r.value if isinstance(r, UserRole) else str(r).upper() for r in allowed_roles}
-        allowed_values.add(UserRole.ADMIN.value)
 
         if x_user_role.upper() not in allowed_values:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied: role '{x_user_role}' does not have the required permissions for this action."
+                detail=f"Access denied: role '{x_user_role}' does not have required permissions."
             )
 
         return {
