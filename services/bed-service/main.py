@@ -1,34 +1,39 @@
-import json
-import os
-from typing import Optional, List, Dict, Any
-from datetime import datetime, timezone
-import httpx
-from fastapi import FastAPI, Header, HTTPException, status, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, and_
-from sqlalchemy.orm import selectinload
-from sqlalchemy.sql import func
-from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel, Field
-import models
-from database import get_db, init_db
-import redis.asyncio as aioredis
-from redis_client import lifespan as redis_lifespan, get_redis
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+import json
+import logging
+import os
+from typing import Any, Dict, List, Optional
 
-# --- CACHE & PUB/SUB CONSTANTS ---
+from fastapi import Depends, FastAPI, HTTPException, Query, status
+import httpx
+from pydantic import BaseModel, Field
+import redis.asyncio as aioredis
+from sqlalchemy import and_, func, select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from database import get_db, init_db
+import models
+from redis_client import get_redis, lifespan as redis_lifespan
+from security import UserRole, require_roles
+
+logger = logging.getLogger("hip.bed")
+
 BEDS_GRID_CACHE_KEY = "beds:grid:all"
-CACHE_TTL_SECONDS = 300  # 5 minutes
+CACHE_TTL_SECONDS = 300
 BED_EVENTS_CHANNEL = "bed:events"
 PATIENT_SERVICE_URL = os.getenv("PATIENT_SERVICE_URL", "http://hip-patient-service:8002")
+INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
+
 
 @asynccontextmanager
 async def combined_lifespan(app: FastAPI):
-    # 1. Initialize database tables
     await init_db()
-    # 2. Initialize Redis pool
     async with redis_lifespan(app):
         yield
+
 
 app = FastAPI(
     title="Hospital Intelligence Platform - Bed & Resource Management Service",
@@ -36,7 +41,6 @@ app = FastAPI(
     lifespan=combined_lifespan
 )
 
-# --- PYDANTIC SCHEMAS ---
 
 class BedCreate(BaseModel):
     bed_code: str = Field(..., min_length=2, max_length=30)
@@ -76,7 +80,7 @@ class EquipmentCreate(BaseModel):
     serial_number: str
     equipment_name: str
     equipment_type_id: Optional[int] = None
-    equipment_type: Optional[str] = None  # Fallback: type name (e.g. "VENTILATOR")
+    equipment_type: Optional[str] = None
     department: str = "EMERGENCY"
 
 
@@ -84,14 +88,13 @@ class EquipmentAllocateRequest(BaseModel):
     equipment_id: int
     admission_id: Optional[int] = None
     encounter_id: Optional[int] = None
-    bed_code: Optional[str] = None  # Resolves active admission on bed
+    bed_code: Optional[str] = None
     expected_version: Optional[int] = None
 
     def get_admission_id(self) -> Optional[int]:
         return self.admission_id or self.encounter_id
 
 
-# Helper to publish events to Redis Pub/Sub
 async def publish_event(redis: aioredis.Redis, event_type: str, data: dict, actor: Optional[str] = None):
     payload = {
         "event_type": event_type,
@@ -101,14 +104,13 @@ async def publish_event(redis: aioredis.Redis, event_type: str, data: dict, acto
     }
     try:
         await redis.publish(BED_EVENTS_CHANNEL, json.dumps(payload))
-        print(f"[PUB/SUB EVENT] Published {event_type} to '{BED_EVENTS_CHANNEL}'")
+        logger.info("Published event %s to '%s'", event_type, BED_EVENTS_CHANNEL)
     except Exception as e:
-        print(f"[PUB/SUB WARNING] Failed to publish event {event_type}: {e}")
+        logger.warning("Failed to publish event %s: %s", event_type, e)
 
 
 async def ensure_seed_data(db: AsyncSession):
-    """Seed initial beds, equipment types, and equipment if tables are empty."""
-    # 1. Seed Beds in bed table
+    """Initializes beds, equipment types, and equipment inventory if tables are empty."""
     bed_check = await db.execute(select(models.Bed).limit(1))
     if not bed_check.scalars().first():
         seed_beds = [
@@ -123,7 +125,6 @@ async def ensure_seed_data(db: AsyncSession):
             db.add(b)
         await db.commit()
 
-    # 2. Seed Equipment Types
     type_check = await db.execute(select(models.EquipmentType).limit(1))
     if not type_check.scalars().first():
         seed_types = [
@@ -138,12 +139,11 @@ async def ensure_seed_data(db: AsyncSession):
             db.add(t)
         await db.commit()
 
-    # 3. Seed Equipment
     eq_check = await db.execute(select(models.Equipment).limit(1))
     if not eq_check.scalars().first():
         types_res = await db.execute(select(models.EquipmentType))
         type_map = {t.name.upper(): t.equipment_type_id for t in types_res.scalars().all()}
-        
+
         seed_eq = [
             models.Equipment(serial_number="VENT-01", equipment_name="Hamilton C6 Ventilator", equipment_type_id=type_map.get("VENTILATOR", 1), department="ICU", version=1),
             models.Equipment(serial_number="VENT-02", equipment_name="Drager Evita V800", equipment_type_id=type_map.get("VENTILATOR", 1), department="EMERGENCY", version=1),
@@ -156,8 +156,6 @@ async def ensure_seed_data(db: AsyncSession):
             db.add(eq)
         await db.commit()
 
-
-# --- 1. HEALTH & BED MATRIX TELEMETRY ---
 
 @app.get("/health")
 async def health_check(db: AsyncSession = Depends(get_db)):
@@ -173,41 +171,27 @@ async def health_check(db: AsyncSession = Depends(get_db)):
 
 @app.get("/grid")
 async def get_bed_grid(
-    x_user_id: str = Header(None), 
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    # Try Redis Cache first
     cached_beds = await redis.get(BEDS_GRID_CACHE_KEY)
     if cached_beds:
         return json.loads(cached_beds)
 
-    # Ensure seed data exists
     await ensure_seed_data(db)
 
-    # Query all physical bed assets
-    stmt = (
-        select(models.Bed)
-        .order_by(models.Bed.department, models.Bed.bed_code)
-    )
-    result = await db.execute(stmt)
-    beds = result.scalars().all()
+    beds_stmt = select(models.Bed).order_by(models.Bed.department, models.Bed.bed_code)
+    beds = (await db.execute(beds_stmt)).scalars().all()
 
-    # Query all active bed allocations (stays)
-    alloc_stmt = (
-        select(models.BedAllocation)
-        .where(
-            and_(
-                models.BedAllocation.status.in_(["RESERVED", "OCCUPIED"]),
-                models.BedAllocation.end_datetime.is_(None)
-            )
+    alloc_stmt = select(models.BedAllocation).where(
+        and_(
+            models.BedAllocation.status.in_(["RESERVED", "OCCUPIED"]),
+            models.BedAllocation.end_datetime.is_(None)
         )
     )
-    alloc_res = await db.execute(alloc_stmt)
-    active_allocs = alloc_res.scalars().all()
+    active_allocs = (await db.execute(alloc_stmt)).scalars().all()
     active_bed_alloc_map: Dict[int, models.BedAllocation] = {a.bed_id: a for a in active_allocs}
 
-    # Query all active equipment allocations
     eq_alloc_stmt = (
         select(models.EquipmentAllocation)
         .options(selectinload(models.EquipmentAllocation.equipment))
@@ -218,10 +202,8 @@ async def get_bed_grid(
             )
         )
     )
-    eq_alloc_res = await db.execute(eq_alloc_stmt)
-    active_eq_allocs = eq_alloc_res.scalars().all()
-    
-    # Map admission_id -> list of equipment names
+    active_eq_allocs = (await db.execute(eq_alloc_stmt)).scalars().all()
+
     admission_eq_map: Dict[int, List[str]] = {}
     for eq_alloc in active_eq_allocs:
         if eq_alloc.equipment:
@@ -257,8 +239,8 @@ async def get_bed_grid(
 
 @app.post("/create")
 async def create_bed(
-    bed_data: BedCreate, 
-    x_user_id: str = Header(None), 
+    bed_data: BedCreate,
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
@@ -284,35 +266,34 @@ async def create_bed(
         "bed_code": new_bed.bed_code,
         "department": new_bed.department,
         "status": new_bed.status
-    }, actor=x_user_id)
+    }, actor=str(current_user["user_id"]))
 
     return {"status": "SUCCESS", "message": f"Bed {new_bed.bed_code} created successfully.", "bed_id": new_bed.bed_id}
 
-
-# --- 2. BED RESERVATION, ADMISSION, TRANSFER & DISCHARGE ---
 
 @app.put("/reserve/{bed_code}")
 async def reserve_bed(
     bed_code: str,
     req: ReserveBedRequest,
-    x_user_id: str = Header(None),
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    """
-    Reserve bed for an Admission with two-tier concurrency protection:
-    1. Dynamic Optimistic Locking on Bed asset (atomic conditional version check).
-    2. Insertion into BedAllocation with PostgreSQL partial unique index protection.
-    """
+    """Reserves bed for an admission with optimistic locking on Bed and unique index protection on BedAllocation."""
     admission_id = req.get_admission_id()
 
-    # If admission_id is not directly supplied but patient_id is, resolve or create active admission
+    internal_headers = {
+        "X-User-Id": str(current_user["user_id"]),
+        "X-User-Role": current_user["role"],
+        "X-Internal-Token": INTERNAL_SERVICE_SECRET,
+    }
+
     if not admission_id and req.patient_id:
         async with httpx.AsyncClient() as client:
             try:
                 active_res = await client.get(
                     f"{PATIENT_SERVICE_URL}/admissions/active/{req.patient_id}",
-                    headers={"x-user-id": str(x_user_id or 1)}
+                    headers=internal_headers
                 )
                 if active_res.status_code == 200 and active_res.json():
                     active_data = active_res.json()
@@ -326,7 +307,7 @@ async def reserve_bed(
                             "acuity_level": req.acuity_level or "ESI_3",
                             "notes": req.notes
                         },
-                        headers={"x-user-id": str(x_user_id or 1)}
+                        headers=internal_headers
                     )
                     if create_res.status_code in (200, 201):
                         adm_data = create_res.json()
@@ -339,18 +320,17 @@ async def reserve_bed(
     if not admission_id:
         raise HTTPException(status_code=400, detail="Either admission_id, encounter_id, or patient_id is required for bed reservation.")
 
-    # 1. Verify Admission is valid & active via Patient Service
     async with httpx.AsyncClient() as client:
         try:
             adm_res = await client.get(
                 f"{PATIENT_SERVICE_URL}/admissions/verify/{admission_id}",
-                headers={"x-user-id": str(x_user_id or 1)}
+                headers=internal_headers
             )
             if adm_res.status_code == 404:
                 raise HTTPException(status_code=404, detail=f"Admission #{admission_id} not found.")
-            elif adm_res.status_code != 200:
+            if adm_res.status_code != 200:
                 raise HTTPException(status_code=502, detail="Patient verification microservice error.")
-            
+
             adm_data = adm_res.json()
             is_active = adm_data.get("is_active", True)
             if not is_active and adm_data.get("admission_status") != "ACTIVE" and adm_data.get("encounter_status") != "ACTIVE":
@@ -358,7 +338,6 @@ async def reserve_bed(
         except httpx.RequestError:
             raise HTTPException(status_code=503, detail="Unable to reach Patient & Admission service.")
 
-    # 2. Check if admission already has an active bed reservation or admission
     alloc_check = await db.execute(
         select(models.BedAllocation).where(
             and_(
@@ -371,22 +350,18 @@ async def reserve_bed(
     if alloc_check.scalars().first():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Admission #{admission_id} already has an active bed reservation or stay.")
 
-    # 3. Locate target Bed asset
     bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == bed_code.upper()))
     bed = bed_result.scalars().first()
     if not bed:
         raise HTTPException(status_code=404, detail="Bed location not found.")
 
     if bed.status != "AVAILABLE":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Bed {bed_code} is currently {bed.status} (must be AVAILABLE)."
-        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Bed {bed_code} is currently {bed.status} (must be AVAILABLE).")
 
-    # 4. Tier 1: Dynamic Optimistic Locking Update on Bed Asset
+    # Invariant: Conditional version increment enforces optimistic locking against race conditions
     current_version = req.expected_version if req.expected_version is not None else bed.version
-    assigned_by = int(x_user_id) if x_user_id and x_user_id.isdigit() else None
-    
+    assigned_by = current_user["user_id"]
+
     stmt = (
         update(models.Bed)
         .where(
@@ -409,7 +384,6 @@ async def reserve_bed(
             detail="State conflict detected: bed was modified concurrently by another user."
         )
 
-    # 5. Tier 2: Create stay ledger entry in BedAllocation protected by PostgreSQL Partial Unique Index
     new_alloc = models.BedAllocation(
         bed_id=bed.bed_id,
         admission_id=admission_id,
@@ -429,7 +403,6 @@ async def reserve_bed(
             detail="Database constraint violation: This bed or admission already has an active reservation."
         )
 
-    # 6. Invalidate Cache & Broadcast
     await redis.delete(BEDS_GRID_CACHE_KEY)
     await publish_event(redis, "BED_RESERVED", {
         "bed_id": bed.bed_id,
@@ -438,7 +411,7 @@ async def reserve_bed(
         "admission_id": admission_id,
         "encounter_id": admission_id,
         "status": "RESERVED"
-    }, actor=x_user_id)
+    }, actor=str(current_user["user_id"]))
 
     return {
         "status": "SUCCESS",
@@ -451,14 +424,12 @@ async def reserve_bed(
 @app.put("/admit/{bed_code}")
 async def confirm_admission(
     bed_code: str,
-    x_user_id: str = Header(None),
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    """Patient arrives at bed: switches bed asset and stay ledger from RESERVED -> OCCUPIED."""
-    bed_result = await db.execute(
-        select(models.Bed).where(models.Bed.bed_code == bed_code.upper())
-    )
+    """Transitions reserved bed asset and stay ledger to OCCUPIED."""
+    bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == bed_code.upper()))
     bed = bed_result.scalars().first()
     if not bed:
         raise HTTPException(status_code=404, detail="Bed location not found.")
@@ -466,7 +437,6 @@ async def confirm_admission(
     if bed.status != "RESERVED":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Bed {bed_code} must be in RESERVED state to confirm arrival (current: {bed.status}).")
 
-    # Locate active BedAllocation
     alloc_result = await db.execute(
         select(models.BedAllocation).where(
             and_(
@@ -478,7 +448,6 @@ async def confirm_admission(
     )
     active_alloc = alloc_result.scalars().first()
 
-    # Optimistic locking conditional update on Bed asset
     current_version = bed.version
     stmt = (
         update(models.Bed)
@@ -500,7 +469,6 @@ async def confirm_admission(
         active_alloc.update_datetime = func.now()
 
     await db.commit()
-
     await redis.delete(BEDS_GRID_CACHE_KEY)
     await publish_event(redis, "BED_OCCUPIED", {
         "bed_id": bed.bed_id,
@@ -508,7 +476,7 @@ async def confirm_admission(
         "allocation_id": active_alloc.allocation_id if active_alloc else None,
         "admission_id": active_alloc.admission_id if active_alloc else None,
         "status": "OCCUPIED"
-    }, actor=x_user_id)
+    }, actor=str(current_user["user_id"]))
 
     return {"status": "SUCCESS", "message": f"Patient arrival confirmed. Bed {bed_code} is now OCCUPIED."}
 
@@ -516,22 +484,12 @@ async def confirm_admission(
 @app.post("/transfer")
 async def transfer_patient_bed(
     req: BedTransferRequest,
-    x_user_id: str = Header(None),
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    """
-    Patient moves from Bed A to Bed B:
-    1. Source Bed A transitions -> DIRTY with a PENDING cleaning_task.
-    2. Source BedAllocation completed with status=TRANSFERRED, end_datetime=now().
-    3. Target Bed B transitions -> OCCUPIED.
-    4. Target BedAllocation created with status=OCCUPIED.
-    All history is preserved!
-    """
-    # 1. Locate Source Bed and its active stay
-    from_result = await db.execute(
-        select(models.Bed).where(models.Bed.bed_code == req.from_bed_code.upper())
-    )
+    """Transfers patient from source bed to target bed, marking source DIRTY and generating cleaning task."""
+    from_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == req.from_bed_code.upper()))
     from_bed = from_result.scalars().first()
     if not from_bed:
         raise HTTPException(status_code=404, detail=f"Source bed {req.from_bed_code} not found.")
@@ -549,7 +507,6 @@ async def transfer_patient_bed(
     if not from_alloc:
         raise HTTPException(status_code=400, detail=f"Bed {req.from_bed_code} does not have an active patient allocation.")
 
-    # 2. Locate Target Bed
     to_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == req.to_bed_code.upper()))
     to_bed = to_result.scalars().first()
     if not to_bed:
@@ -558,10 +515,9 @@ async def transfer_patient_bed(
     if to_bed.status != "AVAILABLE":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Target bed {req.to_bed_code} is {to_bed.status} (must be AVAILABLE).")
 
-    personnel_id = int(x_user_id) if x_user_id and x_user_id.isdigit() else None
+    personnel_id = current_user["user_id"]
     admission_id = from_alloc.admission_id
 
-    # 3. Atomic conditional update on target bed
     to_version = to_bed.version
     stmt_to = (
         update(models.Bed)
@@ -578,7 +534,6 @@ async def transfer_patient_bed(
     if res_to.rowcount == 0:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Target bed {req.to_bed_code} was modified concurrently.")
 
-    # 4. Atomic update on source bed -> DIRTY
     from_version = from_bed.version
     stmt_from = (
         update(models.Bed)
@@ -592,11 +547,9 @@ async def transfer_patient_bed(
     )
     await db.execute(stmt_from)
 
-    # 5. Close Source Stay Ledger
     from_alloc.status = "TRANSFERRED"
     from_alloc.end_datetime = func.now()
 
-    # 6. Create Target Stay Ledger
     new_to_alloc = models.BedAllocation(
         bed_id=to_bed.bed_id,
         admission_id=admission_id,
@@ -606,7 +559,6 @@ async def transfer_patient_bed(
     )
     db.add(new_to_alloc)
 
-    # 7. Auto-generate Cleaning Task for Source Bed
     clean_task = models.CleaningTask(
         bed_id=from_bed.bed_id,
         allocation_id=from_alloc.allocation_id,
@@ -621,14 +573,13 @@ async def transfer_patient_bed(
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Database constraint violation during bed transfer.")
 
-    # 8. Invalidate Cache & Broadcast
     await redis.delete(BEDS_GRID_CACHE_KEY)
     await publish_event(redis, "BED_TRANSFER", {
         "from_bed": req.from_bed_code.upper(),
         "to_bed": req.to_bed_code.upper(),
         "admission_id": admission_id,
         "encounter_id": admission_id
-    }, actor=x_user_id)
+    }, actor=str(current_user["user_id"]))
 
     return {
         "status": "SUCCESS",
@@ -641,21 +592,12 @@ async def transfer_patient_bed(
 @app.put("/discharge/{bed_code}")
 async def discharge_bed(
     bed_code: str,
-    x_user_id: str = Header(None),
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    """
-    Patient Discharge:
-    1. Completes active stay ledger in BedAllocation (status=COMPLETED, end_datetime=now()).
-    2. Releases attached equipment allocations for this admission.
-    3. Transitions Bed -> DIRTY with version increment.
-    4. Auto-creates PENDING cleaning_task for EVS.
-    5. Discharges ADMISSION in Patient Service.
-    """
-    bed_result = await db.execute(
-        select(models.Bed).where(models.Bed.bed_code == bed_code.upper())
-    )
+    """Discharges bed stay, releases equipment, marks bed DIRTY, and creates a PENDING cleaning task."""
+    bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == bed_code.upper()))
     bed = bed_result.scalars().first()
     if not bed:
         raise HTTPException(status_code=404, detail="Bed location not found.")
@@ -663,7 +605,6 @@ async def discharge_bed(
     if bed.status not in ("RESERVED", "OCCUPIED"):
         return {"status": "SUCCESS", "message": f"Bed is already {bed.status}."}
 
-    # Locate active BedAllocation
     alloc_res = await db.execute(
         select(models.BedAllocation).where(
             and_(
@@ -676,12 +617,10 @@ async def discharge_bed(
     active_alloc = alloc_res.scalars().first()
     discharged_admission_id = active_alloc.admission_id if active_alloc else None
 
-    # 1. Close Active Stay in BedAllocation
     if active_alloc:
         active_alloc.status = "COMPLETED"
         active_alloc.end_datetime = func.now()
 
-    # 2. Release Equipment Allocations for this admission
     if discharged_admission_id:
         eq_alloc_stmt = select(models.EquipmentAllocation).where(
             and_(
@@ -698,7 +637,6 @@ async def discharge_bed(
                 eq_item.status = "AVAILABLE"
                 eq_item.version += 1
 
-    # 3. Transition Bed to DIRTY with atomic update
     current_version = bed.version
     stmt = (
         update(models.Bed)
@@ -712,7 +650,6 @@ async def discharge_bed(
     )
     await db.execute(stmt)
 
-    # 4. Auto-generate Cleaning Task for EVS
     new_cleaning_task = models.CleaningTask(
         bed_id=bed.bed_id,
         allocation_id=active_alloc.allocation_id if active_alloc else None,
@@ -722,18 +659,21 @@ async def discharge_bed(
     db.add(new_cleaning_task)
     await db.commit()
 
-    # 5. Complete Admission in Patient Service
     if discharged_admission_id:
+        internal_headers = {
+            "X-User-Id": str(current_user["user_id"]),
+            "X-User-Role": current_user["role"],
+            "X-Internal-Token": INTERNAL_SERVICE_SECRET,
+        }
         async with httpx.AsyncClient() as client:
             try:
                 await client.put(
                     f"{PATIENT_SERVICE_URL}/admissions/discharge/{discharged_admission_id}",
-                    headers={"x-user-id": str(x_user_id or 1)}
+                    headers=internal_headers
                 )
             except httpx.RequestError as e:
-                print(f"[DISCHARGE WARNING] Could not notify patient service: {e}")
+                logger.warning("Could not notify patient service during discharge: %s", e)
 
-    # 6. Invalidate Cache & Broadcast
     await redis.delete(BEDS_GRID_CACHE_KEY)
     await publish_event(redis, "BED_DIRTY", {
         "bed_id": bed.bed_id,
@@ -742,7 +682,7 @@ async def discharge_bed(
         "discharged_encounter_id": discharged_admission_id,
         "cleaning_id": new_cleaning_task.cleaning_id,
         "status": "DIRTY"
-    }, actor=x_user_id)
+    }, actor=str(current_user["user_id"]))
 
     return {
         "status": "SUCCESS",
@@ -750,11 +690,10 @@ async def discharge_bed(
     }
 
 
-# --- 3. CLEANING CREW TERMINAL ENDPOINTS ---
-
 @app.get("/cleaning/tasks")
 async def get_cleaning_tasks(
     status_filter: Optional[str] = Query(None, description="PENDING, IN_PROGRESS, COMPLETED"),
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.CLEANING_CREW, UserRole.NURSE)),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = (
@@ -794,7 +733,7 @@ async def get_cleaning_tasks(
 @app.put("/cleaning/start/{cleaning_id}")
 async def start_cleaning(
     cleaning_id: int,
-    x_user_id: str = Header(None),
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.CLEANING_CREW)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
@@ -804,10 +743,9 @@ async def start_cleaning(
     if not task:
         raise HTTPException(status_code=404, detail="Cleaning task not found.")
 
-    personnel_id = int(x_user_id) if x_user_id and x_user_id.isdigit() else None
     task.status = "IN_PROGRESS"
     task.started_datetime = func.now()
-    task.personnel_id = personnel_id
+    task.personnel_id = current_user["user_id"]
 
     if task.bed:
         task.bed.status = "CLEANING_IN_PROGRESS"
@@ -815,14 +753,13 @@ async def start_cleaning(
         task.bed.update_datetime = func.now()
 
     await db.commit()
-
     await redis.delete(BEDS_GRID_CACHE_KEY)
     await publish_event(redis, "CLEANING_STARTED", {
         "cleaning_id": cleaning_id,
         "bed_id": task.bed_id,
         "bed_code": task.bed.bed_code if task.bed else None,
         "status": "CLEANING_IN_PROGRESS"
-    }, actor=x_user_id)
+    }, actor=str(current_user["user_id"]))
 
     return {"status": "SUCCESS", "message": f"Cleaning task #{cleaning_id} started. Bed is now CLEANING_IN_PROGRESS."}
 
@@ -830,7 +767,7 @@ async def start_cleaning(
 @app.put("/cleaning/complete/{cleaning_id}")
 async def complete_cleaning(
     cleaning_id: int,
-    x_user_id: str = Header(None),
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.CLEANING_CREW)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
@@ -849,19 +786,16 @@ async def complete_cleaning(
         task.bed.update_datetime = func.now()
 
     await db.commit()
-
     await redis.delete(BEDS_GRID_CACHE_KEY)
     await publish_event(redis, "BED_AVAILABLE", {
         "cleaning_id": cleaning_id,
         "bed_id": task.bed_id,
         "bed_code": task.bed.bed_code if task.bed else None,
         "status": "AVAILABLE"
-    }, actor=x_user_id)
+    }, actor=str(current_user["user_id"]))
 
     return {"status": "SUCCESS", "message": f"Cleaning task #{cleaning_id} completed. Bed {task.bed.bed_code if task.bed else ''} is now AVAILABLE!"}
 
-
-# --- 4. MEDICAL EQUIPMENT & EQUIPMENT TYPE MANAGEMENT ---
 
 @app.get("/equipment/types")
 async def get_equipment_types(db: AsyncSession = Depends(get_db)):
@@ -959,13 +893,11 @@ async def create_equipment(req: EquipmentCreate, db: AsyncSession = Depends(get_
 @app.post("/equipment/allocate")
 async def allocate_equipment(
     req: EquipmentAllocateRequest,
-    x_user_id: str = Header(None),
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    """
-    Assign Equipment to an Admission with dynamic optimistic locking & PostgreSQL partial unique index protection.
-    """
+    """Allocates equipment with optimistic locking on Equipment and partial unique index on EquipmentAllocation."""
     eq = await db.get(models.Equipment, req.equipment_id)
     if not eq:
         raise HTTPException(status_code=404, detail="Equipment not found.")
@@ -974,12 +906,8 @@ async def allocate_equipment(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Equipment is currently {eq.status} (must be AVAILABLE).")
 
     admission_id = req.get_admission_id()
-
-    # If bed_code supplied instead of admission_id, resolve active admission on that bed
     if not admission_id and req.bed_code:
-        bed_res = await db.execute(
-            select(models.Bed).where(models.Bed.bed_code == req.bed_code.upper())
-        )
+        bed_res = await db.execute(select(models.Bed).where(models.Bed.bed_code == req.bed_code.upper()))
         target_bed = bed_res.scalars().first()
         if target_bed and target_bed.status in ("RESERVED", "OCCUPIED"):
             alloc_res = await db.execute(
@@ -998,9 +926,9 @@ async def allocate_equipment(
     if not admission_id:
         raise HTTPException(status_code=400, detail="Cannot allocate equipment without an active admission.")
 
-    personnel_id = int(x_user_id) if x_user_id and x_user_id.isdigit() else None
+    personnel_id = current_user["user_id"]
 
-    # Tier 1: Dynamic Optimistic Locking Update on Equipment Asset
+    # Invariant: Conditional update on version enforces optimistic locking on equipment asset
     current_version = req.expected_version if req.expected_version is not None else eq.version
     stmt = (
         update(models.Equipment)
@@ -1023,7 +951,6 @@ async def allocate_equipment(
             detail="State conflict detected: equipment was modified or allocated concurrently."
         )
 
-    # Tier 2: Create EquipmentAllocation ledger entry protected by PostgreSQL Partial Unique Index
     alloc = models.EquipmentAllocation(
         equipment_id=eq.equipment_id,
         admission_id=admission_id,
@@ -1050,7 +977,7 @@ async def allocate_equipment(
         "equipment_allocation_id": alloc.equipment_allocation_id,
         "admission_id": admission_id,
         "encounter_id": admission_id
-    }, actor=x_user_id)
+    }, actor=str(current_user["user_id"]))
 
     return {
         "status": "SUCCESS",
@@ -1062,11 +989,10 @@ async def allocate_equipment(
 @app.put("/equipment/release/{equipment_allocation_id}")
 async def release_equipment(
     equipment_allocation_id: int,
-    x_user_id: str = Header(None),
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.CLEANING_CREW)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    """Releases an equipment allocation, setting status=RELEASED and returning equipment to AVAILABLE."""
     alloc = await db.get(models.EquipmentAllocation, equipment_allocation_id)
     if not alloc:
         raise HTTPException(status_code=404, detail="Equipment allocation not found.")

@@ -1,43 +1,51 @@
-import os
-from typing import Optional, List
-from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, status, Header
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func
-import models
-import schemas  
-from database import get_db, init_db
-import security
+from datetime import datetime, timedelta, timezone
+import logging
+import os
+from typing import List, Optional
+
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 import jwt
 import redis.asyncio as aioredis
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database import get_db, init_db
+import models
+import schemas
+import security
+
+logger = logging.getLogger("hip.auth")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
     raise RuntimeError("SECRET_KEY environment variable is not set.")
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 REDIS_URL = os.getenv("REDIS_URL", "redis://hip-redis:6379")
+
 
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     now_ts = datetime.now(timezone.utc).timestamp()
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"iat": now_ts, "exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Ensure database tables are created asynchronously
     await init_db()
     yield
+
 
 app = FastAPI(
     title="Hospital Intelligence Platform - Personnel Auth Service",
     version="2.0.0",
     lifespan=lifespan
 )
+
 
 @app.get("/health")
 async def health_check(db: AsyncSession = Depends(get_db)):
@@ -50,24 +58,17 @@ async def health_check(db: AsyncSession = Depends(get_db)):
             detail=f"Database connection failed: {str(e)}"
         )
 
+
 @app.post("/register", response_model=schemas.PersonnelResponse, status_code=status.HTTP_201_CREATED)
 async def register_personnel(personnel_in: schemas.PersonnelCreate, db: AsyncSession = Depends(get_db)):
-    # 1. Check if username already exists
-    result_user = await db.execute(select(models.Personnel).where(models.Personnel.username == personnel_in.username))
-    if result_user.scalars().first():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already exists"
-        )
-        
-    # 2. Check if email already registered
-    result_email = await db.execute(select(models.Personnel).where(models.Personnel.email == personnel_in.email))
-    if result_email.scalars().first():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
+    user_exists = await db.execute(select(models.Personnel).where(models.Personnel.username == personnel_in.username))
+    if user_exists.scalars().first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
+
+    email_exists = await db.execute(select(models.Personnel).where(models.Personnel.email == personnel_in.email))
+    if email_exists.scalars().first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
     new_personnel = models.Personnel(
         username=personnel_in.username,
         email=personnel_in.email,
@@ -76,36 +77,24 @@ async def register_personnel(personnel_in: schemas.PersonnelCreate, db: AsyncSes
         role=personnel_in.role.upper(),
         department=personnel_in.department.upper()
     )
-    
+
     db.add(new_personnel)
     await db.commit()
     await db.refresh(new_personnel)
-    
     return new_personnel
+
 
 @app.post("/login", response_model=schemas.TokenResponse, status_code=status.HTTP_200_OK)
 async def login_personnel(credentials: schemas.LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(models.Personnel).where(models.Personnel.email == credentials.email))
     personnel = result.scalars().first()
-    
-    if not personnel:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
-    is_valid = security.verify_password(credentials.password, personnel.hashed_password)
-    if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
-    
+
+    if not personnel or not security.verify_password(credentials.password, personnel.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+
     if not personnel.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is inactive. Contact system administrator."
-        )
-        
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive. Contact system administrator.")
+
     token_data = {
         "sub": str(personnel.personnel_id),
         "username": personnel.username,
@@ -113,10 +102,9 @@ async def login_personnel(credentials: schemas.LoginRequest, db: AsyncSession = 
         "department": personnel.department,
         "full_name": personnel.full_name
     }
-    access_token = create_access_token(data=token_data)
-    
+
     return schemas.TokenResponse(
-        access_token=access_token,
+        access_token=create_access_token(token_data),
         token_type="bearer",
         personnel_id=personnel.personnel_id,
         username=personnel.username,
@@ -125,17 +113,14 @@ async def login_personnel(credentials: schemas.LoginRequest, db: AsyncSession = 
         department=personnel.department
     )
 
+
 @app.post("/logout")
-async def logout(
-    x_user_id: str = Header(None), 
-    db: AsyncSession = Depends(get_db)
-):
+async def logout(x_user_id: str = Header(None), db: AsyncSession = Depends(get_db)):
     if not x_user_id:
         raise HTTPException(status_code=403, detail="Gateway authentication context missing.")
 
     current_ts = datetime.now(timezone.utc).timestamp()
 
-    # 1. Update PostgreSQL database
     await db.execute(
         update(models.Personnel)
         .where(models.Personnel.personnel_id == int(x_user_id))
@@ -143,43 +128,39 @@ async def logout(
     )
     await db.commit()
 
-    # 2. Save last_logout timestamp to Redis for sub-millisecond Gateway revocation
     try:
         redis = aioredis.from_url(REDIS_URL, decode_responses=True)
         await redis.set(f"last_logout:{x_user_id}", str(current_ts), ex=3600)
         await redis.aclose()
     except Exception as e:
-        print(f"[REDIS LOGOUT ERROR] Failed to record logout in Redis: {e}")
+        logger.error("Failed to record logout in Redis: %s", e)
 
     return {"status": "SUCCESS", "message": "Logged out successfully. Token invalidated."}
 
+
 @app.get("/me", response_model=schemas.PersonnelResponse)
-async def get_current_personnel(
-    x_user_id: str = Header(None),
-    db: AsyncSession = Depends(get_db)
-):
+async def get_current_personnel(x_user_id: str = Header(None), db: AsyncSession = Depends(get_db)):
     if not x_user_id:
         raise HTTPException(status_code=403, detail="Gateway authentication context missing.")
-    
+
     result = await db.execute(select(models.Personnel).where(models.Personnel.personnel_id == int(x_user_id)))
     personnel = result.scalars().first()
     if not personnel:
         raise HTTPException(status_code=404, detail="Personnel record not found.")
     return personnel
 
+
 @app.get("/personnel/nurses", response_model=List[schemas.PersonnelResponse])
-async def get_active_nurses(
-    x_user_id: str = Header(None),
-    db: AsyncSession = Depends(get_db)
-):
-    """List active nurses for assignment."""
+async def get_active_nurses(x_user_id: str = Header(None), db: AsyncSession = Depends(get_db)):
+    """List active nurses for shift assignment."""
     result = await db.execute(
         select(models.Personnel).where(
             models.Personnel.role == "NURSE",
-            models.Personnel.is_active == True
+            models.Personnel.is_active.is_(True)
         ).order_by(models.Personnel.full_name)
     )
     return result.scalars().all()
+
 
 @app.get("/personnel/staff", response_model=List[schemas.PersonnelResponse])
 async def get_all_staff(
@@ -187,7 +168,7 @@ async def get_all_staff(
     x_user_id: str = Header(None),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all personnel with optional role filter."""
+    """List personnel with optional role filter."""
     stmt = select(models.Personnel)
     if role:
         stmt = stmt.where(models.Personnel.role == role.upper())
@@ -195,16 +176,14 @@ async def get_all_staff(
     result = await db.execute(stmt)
     return result.scalars().all()
 
+
 @app.put("/personnel/{personnel_id}/deactivate")
 async def deactivate_personnel(
     personnel_id: int,
     x_user_id: str = Header(None),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Soft-deactivates a personnel account when staff leaves.
-    Never physically deletes personnel records to preserve full audit history.
-    """
+    """Soft-deactivate a personnel account without deleting historical records."""
     personnel = await db.get(models.Personnel, personnel_id)
     if not personnel:
         raise HTTPException(status_code=404, detail="Personnel not found.")

@@ -1,19 +1,25 @@
-import os
-from datetime import datetime, date, timezone
-from typing import Optional, List
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Header, HTTPException, status, Depends, Query
+from datetime import date, datetime
+import logging
+from typing import List, Optional
+
+from fastapi import Depends, FastAPI, HTTPException, Query, status
+from pydantic import BaseModel, Field, computed_field, field_validator
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, func
-from pydantic import BaseModel, Field, field_validator, computed_field
-import models
+
 from database import get_db, init_db
+import models
+from security import UserRole, require_roles, require_roles_or_internal
+
+logger = logging.getLogger("hip.patient")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Ensure tables are created asynchronously
     await init_db()
     yield
+
 
 app = FastAPI(
     title="Hospital Intelligence Platform - Patient & Admission Service",
@@ -21,7 +27,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# --- 1. PYDANTIC SCHEMAS ---
 
 class PatientCreate(BaseModel):
     first_name: Optional[str] = Field(None, min_length=1, max_length=50)
@@ -31,7 +36,7 @@ class PatientCreate(BaseModel):
     gender: str = Field(..., description="MALE, FEMALE, or OTHER")
     phone: Optional[str] = Field(None, max_length=30)
     address: Optional[str] = None
-    
+
     # Backward compatibility fields for legacy clients sending 'name' & 'age'
     name: Optional[str] = None
     age: Optional[int] = None
@@ -188,8 +193,6 @@ class NurseAssignmentResponse(BaseModel):
         from_attributes = True
 
 
-# --- 2. HEALTH CHECK ---
-
 @app.get("/health")
 async def health_check(db: AsyncSession = Depends(get_db)):
     try:
@@ -202,22 +205,13 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         )
 
 
-# --- 3. PATIENT IDENTITY & MULTI-FIELD SEARCH ---
-
 @app.get("/records", response_model=List[PatientResponse])
 async def get_patient_records(
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    if not x_user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Direct internal access forbidden. Route through the API Gateway."
-        )
-
     result = await db.execute(select(models.Patient).order_by(models.Patient.patient_id.desc()))
-    patients = result.scalars().all()
-    return patients
+    return result.scalars().all()
 
 
 @app.get("/search", response_model=List[PatientResponse])
@@ -227,20 +221,10 @@ async def search_patients(
     last_name: Optional[str] = Query(None),
     date_of_birth: Optional[date] = Query(None),
     phone: Optional[str] = Query(None),
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Multi-field Patient Search:
-    Searches patients using first name, last name, date of birth, and/or phone.
-    Maintains separate patient identities for people with identical names but different DOBs.
-    """
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
-
-    stmt = select(models.Patient)
     filters = []
-
     if first_name:
         filters.append(func.lower(models.Patient.first_name) == first_name.strip().lower())
     if last_name:
@@ -250,8 +234,8 @@ async def search_patients(
     if phone:
         filters.append(models.Patient.phone == phone.strip())
 
+    stmt = select(models.Patient)
     if not filters:
-        # Return recent records if no filter given
         stmt = stmt.order_by(models.Patient.patient_id.desc()).limit(20)
     else:
         stmt = stmt.where(and_(*filters)).order_by(models.Patient.patient_id.asc())
@@ -263,17 +247,10 @@ async def search_patients(
 @app.post("/register", response_model=PatientResponse, status_code=status.HTTP_201_CREATED)
 async def register_patient(
     patient_in: PatientCreate,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Registers a permanent patient identity.
-    If full demographic match (first_name, last_name, DOB) already exists, returns existing patient_id.
-    """
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
-
-    # Handle legacy name & age conversion if first_name/last_name/DOB are omitted
+    """Registers patient identity. Returns existing record if exact name + DOB matches."""
     first_name = patient_in.first_name
     middle_name = patient_in.middle_name
     last_name = patient_in.last_name
@@ -290,33 +267,29 @@ async def register_patient(
         else:
             last_name = "Unknown"
 
-    if not last_name:
-        last_name = "Unknown"
-    if not first_name:
-        first_name = "Patient"
+    first_name = (first_name or "Patient").strip().title()
+    last_name = (last_name or "Unknown").strip().title()
+    middle_name = middle_name.strip().title() if middle_name else None
 
     if not dob:
         age_years = patient_in.age if patient_in.age is not None else 30
-        today = date.today()
-        dob = date(today.year - age_years, 1, 1)
+        dob = date(date.today().year - age_years, 1, 1)
 
-    # Check for existing identical person match (first_name, last_name, date_of_birth)
     match_stmt = select(models.Patient).where(
         and_(
-            func.lower(models.Patient.first_name) == first_name.strip().lower(),
-            func.lower(models.Patient.last_name) == last_name.strip().lower(),
+            func.lower(models.Patient.first_name) == first_name.lower(),
+            func.lower(models.Patient.last_name) == last_name.lower(),
             models.Patient.date_of_birth == dob
         )
     )
     existing_match = (await db.execute(match_stmt)).scalars().first()
     if existing_match:
-        # Exact person exists: return existing patient_id
         return existing_match
 
     new_patient = models.Patient(
-        first_name=first_name.strip().title(),
-        middle_name=middle_name.strip().title() if middle_name else None,
-        last_name=last_name.strip().title(),
+        first_name=first_name,
+        middle_name=middle_name,
+        last_name=last_name,
         date_of_birth=dob,
         gender=patient_in.gender.upper(),
         phone=patient_in.phone.strip() if patient_in.phone else None,
@@ -326,22 +299,16 @@ async def register_patient(
     db.add(new_patient)
     await db.commit()
     await db.refresh(new_patient)
-
     return new_patient
 
 
 @app.get("/verify/{patient_id}")
 async def verify_patient(
     patient_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
-
-    result = await db.execute(
-        select(models.Patient).where(models.Patient.patient_id == patient_id)
-    )
+    result = await db.execute(select(models.Patient).where(models.Patient.patient_id == patient_id))
     record = result.scalars().first()
     if not record:
         raise HTTPException(status_code=404, detail="Patient record not found.")
@@ -365,44 +332,28 @@ async def verify_patient(
 @app.get("/patient/{patient_id}", response_model=PatientResponse)
 async def get_patient_by_id(
     patient_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
-
-    result = await db.execute(
-        select(models.Patient).where(models.Patient.patient_id == patient_id)
-    )
+    result = await db.execute(select(models.Patient).where(models.Patient.patient_id == patient_id))
     record = result.scalars().first()
     if not record:
         raise HTTPException(status_code=404, detail="Patient record not found.")
-
     return record
 
-
-# --- 4. ADMISSION / ENCOUNTER MANAGEMENT ---
 
 @app.post("/admissions/create", response_model=AdmissionResponse, status_code=status.HTTP_201_CREATED)
 @app.post("/encounters/create", response_model=AdmissionResponse, status_code=status.HTTP_201_CREATED)
 async def create_admission(
     admission_in: AdmissionCreate,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Creates a new hospital stay (Admission) for a permanent patient.
-    Checks that the patient exists and does not already have an active stay (discharge is NULL).
-    """
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
-
-    # 1. Verify Patient exists
+    """Creates a hospital admission. Returns current active admission if already admitted."""
     patient = await db.get(models.Patient, admission_in.patient_id)
     if not patient:
         raise HTTPException(status_code=404, detail=f"Patient ID {admission_in.patient_id} does not exist.")
 
-    # 2. Check if patient already has an ACTIVE admission (discharge_datetime is NULL)
     active_stmt = select(models.Admission).where(
         and_(
             models.Admission.patient_id == admission_in.patient_id,
@@ -411,9 +362,8 @@ async def create_admission(
     )
     active_adm = (await db.execute(active_stmt)).scalars().first()
     if active_adm:
-        return active_adm  # Return current active admission
+        return active_adm
 
-    # 3. Create new Admission
     new_admission = models.Admission(
         patient_id=admission_in.patient_id,
         primary_diagnosis=admission_in.get_primary_diagnosis(),
@@ -423,7 +373,6 @@ async def create_admission(
     db.add(new_admission)
     await db.commit()
     await db.refresh(new_admission)
-
     return new_admission
 
 
@@ -431,10 +380,9 @@ async def create_admission(
 @app.get("/encounters/active/{patient_id}", response_model=Optional[AdmissionResponse])
 async def get_active_admission(
     patient_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    """Retrieves the active admission (discharge_datetime is NULL) for a patient if one exists."""
     stmt = select(models.Admission).where(
         and_(
             models.Admission.patient_id == patient_id,
@@ -449,10 +397,9 @@ async def get_active_admission(
 @app.get("/encounters/verify/{admission_id}")
 async def verify_admission(
     admission_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    """Inter-service validation endpoint for Bed Service to verify an admission is valid and active."""
     admission = await db.get(models.Admission, admission_id)
     if not admission:
         raise HTTPException(status_code=404, detail=f"Admission #{admission_id} not found.")
@@ -484,7 +431,7 @@ async def verify_admission(
 @app.get("/encounters/{admission_id}", response_model=AdmissionResponse)
 async def get_admission_by_id(
     admission_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
     admission = await db.get(models.Admission, admission_id)
@@ -495,12 +442,11 @@ async def get_admission_by_id(
 
 @app.get("/admissions/patient/{patient_id}", response_model=List[AdmissionResponse])
 @app.get("/encounters/patient/{patient_id}", response_model=List[AdmissionResponse])
-async def get_patient_admissions_history(
+async def get_admissions_by_patient(
     patient_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    """Preserves full historical timeline of all admissions for a patient."""
     stmt = select(models.Admission).where(
         models.Admission.patient_id == patient_id
     ).order_by(models.Admission.arrival_datetime.desc())
@@ -512,21 +458,15 @@ async def get_patient_admissions_history(
 @app.put("/encounters/discharge/{admission_id}")
 async def discharge_admission(
     admission_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Completes the admission:
-    Sets discharge_datetime = now().
-    Patient record remains active and permanent.
-    """
     admission = await db.get(models.Admission, admission_id)
     if not admission:
         raise HTTPException(status_code=404, detail=f"Admission #{admission_id} not found.")
 
     admission.discharge_datetime = func.now()
 
-    # Complete any active nurse assignments
     nurse_stmt = select(models.PatientNurseAssignment).where(
         and_(
             models.PatientNurseAssignment.admission_id == admission_id,
@@ -542,28 +482,19 @@ async def discharge_admission(
     return {"status": "SUCCESS", "message": f"Admission #{admission_id} successfully discharged."}
 
 
-# --- 5. PATIENT NURSE ASSIGNMENTS ---
-
 @app.post("/admissions/{admission_id}/assign-nurse", response_model=NurseAssignmentResponse, status_code=status.HTTP_201_CREATED)
 @app.post("/encounters/{admission_id}/assign-nurse", response_model=NurseAssignmentResponse, status_code=status.HTTP_201_CREATED)
 async def assign_nurse_to_admission(
     admission_id: int,
     assignment_in: NurseAssignmentCreate,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Assigns a nurse to the patient's active admission.
-    Completes any previous active nurse assignment (shift handover).
-    """
-    if not x_user_id:
-        raise HTTPException(status_code=403, detail="Gateway verification failed.")
-
+    """Assigns nurse to active admission and closes previous active shift assignment."""
     admission = await db.get(models.Admission, admission_id)
     if not admission or admission.discharge_datetime is not None:
         raise HTTPException(status_code=400, detail="Cannot assign nurse to discharged or non-existent admission.")
 
-    # Complete previous active assignment if exists
     active_stmt = select(models.PatientNurseAssignment).where(
         and_(
             models.PatientNurseAssignment.admission_id == admission_id,
@@ -583,7 +514,6 @@ async def assign_nurse_to_admission(
     db.add(new_assignment)
     await db.commit()
     await db.refresh(new_assignment)
-
     return new_assignment
 
 
@@ -591,10 +521,9 @@ async def assign_nurse_to_admission(
 @app.put("/encounters/nurse-assignments/{assignment_id}/complete")
 async def complete_nurse_assignment(
     assignment_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    """Closes a nursing assignment at the end of a shift without deleting history."""
     assignment = await db.get(models.PatientNurseAssignment, assignment_id)
     if not assignment:
         raise HTTPException(status_code=404, detail="Nurse assignment not found.")
@@ -602,7 +531,6 @@ async def complete_nurse_assignment(
     assignment.status = "COMPLETED"
     assignment.end_datetime = func.now()
     await db.commit()
-
     return {"status": "SUCCESS", "message": f"Nurse assignment #{assignment_id} completed."}
 
 
@@ -610,10 +538,9 @@ async def complete_nurse_assignment(
 @app.get("/encounters/{admission_id}/nurse-assignments", response_model=List[NurseAssignmentResponse])
 async def get_admission_nurse_assignments(
     admission_id: int,
-    x_user_id: str = Header(None),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
-    """Retrieves all historical and active nurse assignments for an admission."""
     stmt = select(models.PatientNurseAssignment).where(
         models.PatientNurseAssignment.admission_id == admission_id
     ).order_by(models.PatientNurseAssignment.start_datetime.desc())
