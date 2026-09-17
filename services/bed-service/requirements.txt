@@ -6,3 +6,4 @@ greenlet>=3.0.0
 pydantic
 httpx
 redis
+alembic>=1.13.0

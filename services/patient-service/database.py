@@ -3,10 +3,9 @@ import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql+asyncpg://hip_admin:oOk5ixYB0ZkX-c2AcQOTRw@hip-postgres:5432/hospital_intelligence"
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set.")
 
 # 1. Initialize the SQLAlchemy Async Engine
 engine = create_async_engine(

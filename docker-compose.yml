@@ -21,6 +21,7 @@ services:
       - ./gateway:/app
     environment:
       - ENV=development
+      - SECRET_KEY=${SECRET_KEY}
       - REDIS_URL=${REDIS_URL:-redis://hip-redis:6379}
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://hip-auth-service:8001}
       - PATIENT_SERVICE_URL=${PATIENT_SERVICE_URL:-http://hip-patient-service:8002}
@@ -46,12 +47,15 @@ services:
     environment:
       - ENV=development
       - DATABASE_URL=${DATABASE_URL} 
-      - SECRET_KEY=${SECRET_KEY}      
+      - SECRET_KEY=${SECRET_KEY}
+      - REDIS_URL=${REDIS_URL:-redis://hip-redis:6379}
     networks:
       - hip-network
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
 
   # --- PATIENT SERVICE ---
   patient-service:
