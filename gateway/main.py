@@ -1,8 +1,10 @@
 import asyncio
 from contextlib import asynccontextmanager
+import json
 import logging
 import os
 from typing import Any, Dict, Optional, Set
+import urllib.parse
 
 from fastapi import Body, Depends, FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -102,28 +104,50 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Hospital Intelligence Platform - API Gateway",
+    version="2.3.0",
     swagger_ui_parameters={"persistAuthorization": True},
     lifespan=lifespan
 )
 
-origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+# --- CORS — HIGH-3 FIX: Tighten from wildcard to explicit ---
+cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
+
+
+# --- LOW-3 FIX: Security headers middleware (CSP allows Swagger CDN assets) ---
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "0"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src 'self' data: https://fastapi.tiangolo.com; "
+        "connect-src 'self' ws: wss:;"
+    )
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
+
+
+
+
 
 bearer_scheme = APIKeyHeader(name="Authorization", auto_error=False, description="Format: Bearer <JWT_TOKEN>")
 
 
+# --- User context extraction middleware ---
 @app.middleware("http")
 async def extract_user_context(request: Request, call_next):
     request.state.user_id = None
@@ -133,13 +157,24 @@ async def extract_user_context(request: Request, call_next):
     request.state.full_name = None
 
     auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
+    if not auth_header:
         return await call_next(request)
 
-    token = auth_header.split(" ", 1)[1]
+    raw_val = auth_header.strip()
+    if raw_val.lower().startswith("bearer "):
+        raw_val = raw_val[7:].strip()
+
+    # Sanitize accidental copy-paste artifacts like quotes or subsequent json keys
+    token = raw_val.strip('"').strip("'")
+    if '"' in token:
+        token = token.split('"', 1)[0].strip()
+    if ',' in token:
+        token = token.split(',', 1)[0].strip()
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except (jwt.PyJWTError, IndexError):
+    except (jwt.PyJWTError, IndexError, Exception) as e:
+        logger.debug("Failed to decode token: %s", e)
         return await call_next(request)
 
     user_id = payload.get("sub")
@@ -158,16 +193,75 @@ async def extract_user_context(request: Request, call_next):
             await redis.aclose()
 
     request.state.user_id = user_id
-    request.state.username = payload.get("username")
     request.state.role = payload.get("role")
+    # Username, department, full_name may not be in JWT (LOW-1 fix — reduced payload)
+    # Forward what we have; downstream services can look up additional fields if needed
+    request.state.username = payload.get("username")
     request.state.department = payload.get("department")
     request.state.full_name = payload.get("full_name")
+
+    # ── PASSWORD-RESET GATE ──
+    # Restricted tokens (must_change_password=True) are blocked from all clinical routes.
+    # Only the password reset flow, logout, and profile endpoints are accessible.
+    if payload.get("must_change_password"):
+        ALLOWED_RESET_ROUTES = {
+            ("POST", "/auth/force-reset-password"),
+            ("POST", "/auth/logout"),
+            ("GET", "/auth/me"),
+        }
+        req_pair = (request.method.upper(), request.url.path.rstrip("/"))
+        if req_pair not in ALLOWED_RESET_ROUTES:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Password reset required before accessing clinical resources."}
+            )
 
     return await call_next(request)
 
 
+# --- HIGH-1 FIX: WebSocket with JWT authentication ---
+async def validate_ws_token(token: str) -> Optional[Dict[str, Any]]:
+    """Validate a JWT token for WebSocket authentication."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.PyJWTError:
+        return None
+
+    user_id = payload.get("sub")
+    token_issued_at = payload.get("iat")
+
+    if not user_id:
+        return None
+
+    # Check Redis revocation
+    if token_issued_at and user_id:
+        redis = aioredis.from_url(REDIS_URL, decode_responses=True)
+        try:
+            last_logout = await redis.get(f"last_logout:{user_id}")
+            if last_logout and token_issued_at < float(last_logout):
+                return None
+        finally:
+            await redis.aclose()
+
+    return payload
+
+
 @app.websocket("/ws/beds")
 async def websocket_bed_updates(websocket: WebSocket):
+    # HIGH-1 FIX: Require JWT token via query parameter
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="Authentication required. Provide token as query parameter.")
+        return
+
+    payload = await validate_ws_token(token)
+    if not payload:
+        await websocket.close(code=4001, reason="Invalid or expired authentication token.")
+        return
+
+    user_id = payload.get("sub")
+    logger.info("Authenticated WebSocket connection from user_id=%s", user_id)
+
     await manager.connect(websocket)
     try:
         while True:
@@ -178,11 +272,15 @@ async def websocket_bed_updates(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
+# ===========================================================================
+# SERVICE PROXY CONFIGURATION
+# ===========================================================================
+
 SERVICES_CONFIG = {
     "auth": {
         "url": os.getenv("AUTH_SERVICE_URL", "http://hip-auth-service:8001").rstrip("/"),
         "error_msg": "Authentication microservice is down or unreachable.",
-        "methods": ["get", "post", "put"],
+        "methods": ["get", "post", "put", "delete"],
         "strip_prefix": True
     },
     "patients": {
@@ -199,7 +297,7 @@ SERVICES_CONFIG = {
     }
 }
 
-BODY_METHODS = {"post", "put", "patch"}
+BODY_METHODS = {"post", "put", "patch", "delete"}
 
 HOP_BY_HOP_HEADERS = {
     "host",
@@ -215,6 +313,63 @@ HOP_BY_HOP_HEADERS = {
     "content-encoding"
 }
 
+IDEMPOTENCY_TTL_SECONDS = 120  # 2 minute protection window for tablet/network retries
+
+
+async def check_idempotency(redis_url: str, key: str) -> Optional[Response]:
+    """Check if an Idempotency-Key is already completed or in flight."""
+    try:
+        redis = aioredis.from_url(redis_url, decode_responses=True)
+        try:
+            cached_val = await redis.get(key)
+            if cached_val:
+                if cached_val == "IN_PROGRESS":
+                    return JSONResponse(
+                        status_code=409,
+                        content={"detail": "A request with this Idempotency-Key is currently in progress."}
+                    )
+                cached = json.loads(cached_val)
+                resp = Response(
+                    content=cached.get("body", "").encode("utf-8"),
+                    status_code=cached.get("status_code", 200),
+                    media_type="application/json"
+                )
+                resp.headers["X-Cache-Lookup"] = "HIT-IDEMPOTENT"
+                return resp
+            # Reserve key atomically
+            await redis.set(key, "IN_PROGRESS", ex=IDEMPOTENCY_TTL_SECONDS)
+            return None
+        finally:
+            await redis.aclose()
+    except Exception as e:
+        logger.warning("Idempotency check failed, bypassing: %s", e)
+        return None
+
+
+async def save_idempotency(redis_url: str, key: str, status_code: int, body_text: str):
+    """Store completed response under Idempotency-Key with sliding TTL."""
+    try:
+        redis = aioredis.from_url(redis_url, decode_responses=True)
+        try:
+            data = json.dumps({"status_code": status_code, "body": body_text})
+            await redis.set(key, data, ex=IDEMPOTENCY_TTL_SECONDS)
+        finally:
+            await redis.aclose()
+    except Exception as e:
+        logger.warning("Failed to save idempotency cache: %s", e)
+
+
+async def clear_idempotency(redis_url: str, key: str):
+    """Clear key on upstream/downstream errors so client can retry immediately."""
+    try:
+        redis = aioredis.from_url(redis_url, decode_responses=True)
+        try:
+            await redis.delete(key)
+        finally:
+            await redis.aclose()
+    except Exception as e:
+        logger.warning("Failed to clear idempotency key: %s", e)
+
 
 async def forward_request(request: Request, service_name: str, path: str):
     global http_client
@@ -222,11 +377,21 @@ async def forward_request(request: Request, service_name: str, path: str):
         return JSONResponse(status_code=500, content={"detail": "Gateway HTTP Client uninitialized."})
 
     config = SERVICES_CONFIG[service_name]
-    clean_path = path.lstrip("/")
+    clean_path = urllib.parse.unquote(path).lstrip("/")
     target_url = f"{config['url']}/{clean_path}" if config["strip_prefix"] else f"{config['url']}/{service_name}/{clean_path}"
 
     has_body = request.method.lower() in BODY_METHODS
     body = await request.body() if has_body else None
+
+    # Lightweight Redis-backed idempotency protection on mutating actions
+    idempotency_key = request.headers.get("idempotency-key") or request.headers.get("x-idempotency-key")
+    redis_idemp_key = None
+    if idempotency_key and has_body:
+        user_id_part = str(request.state.user_id) if request.state.user_id else "anon"
+        redis_idemp_key = f"idempotency:{user_id_part}:{request.method.upper()}:{service_name}:{clean_path}:{idempotency_key}"
+        cached_resp = await check_idempotency(REDIS_URL, redis_idemp_key)
+        if cached_resp is not None:
+            return cached_resp
 
     # Invariant: Normalize keys with .lower() to strip hop-by-hop and client-supplied x-user-* / x-internal-* headers
     headers_to_forward = {
@@ -264,12 +429,20 @@ async def forward_request(request: Request, service_name: str, path: str):
             if k.lower() not in HOP_BY_HOP_HEADERS
         }
 
+        # Cache completed response if idempotency key was supplied
+        if redis_idemp_key and response.status_code < 500:
+            await save_idempotency(REDIS_URL, redis_idemp_key, response.status_code, response.text)
+        elif redis_idemp_key and response.status_code >= 500:
+            await clear_idempotency(REDIS_URL, redis_idemp_key)
+
         return Response(
             content=response.content,
             status_code=response.status_code,
             headers=response_headers
         )
     except httpx.HTTPError as e:
+        if redis_idemp_key:
+            await clear_idempotency(REDIS_URL, redis_idemp_key)
         logger.error("Downstream communication failure at %s: %s", target_url, e)
         return JSONResponse(
             status_code=503,

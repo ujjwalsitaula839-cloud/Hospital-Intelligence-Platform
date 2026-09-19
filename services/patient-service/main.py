@@ -1,18 +1,27 @@
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 import logging
+import os
+import re
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
-from pydantic import BaseModel, Field, computed_field, field_validator
+from fastapi.responses import JSONResponse
+import httpx
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 from sqlalchemy import and_, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audit import log_audit
 from database import get_db, init_db
 import models
 from security import UserRole, require_roles, require_roles_or_internal
 
 logger = logging.getLogger("hip.patient")
+
+BED_SERVICE_URL = os.getenv("BED_SERVICE_URL", "http://hip-bed-service:8003").rstrip("/")
+INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
 
 
 @asynccontextmanager
@@ -59,6 +68,7 @@ class PatientResponse(BaseModel):
     gender: str
     phone: Optional[str] = None
     address: Optional[str] = None
+    is_active: bool = True
     create_datetime: Optional[datetime] = None
     update_datetime: Optional[datetime] = None
 
@@ -90,12 +100,21 @@ class PatientResponse(BaseModel):
         from_attributes = True
 
 
+def sanitize_text(value: Optional[str], max_len: int = 500) -> Optional[str]:
+    """Strip HTML tags and control characters from user input."""
+    if value is None:
+        return None
+    cleaned = re.sub(r'<[^>]+>', '', value)  # Strip HTML tags
+    cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', cleaned)  # Strip control chars
+    return cleaned[:max_len].strip()
+
+
 class AdmissionCreate(BaseModel):
     patient_id: int
-    primary_diagnosis: Optional[str] = Field(None, description="Admitting clinical primary diagnosis")
-    diagnosis: Optional[str] = Field(None, description="Alias for primary diagnosis")
+    primary_diagnosis: Optional[str] = Field(None, max_length=500, description="Admitting clinical primary diagnosis")
+    diagnosis: Optional[str] = Field(None, max_length=500, description="Alias for primary diagnosis")
     acuity_level: Optional[str] = Field("ESI_3", description="ESI_1 through ESI_5")
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=1000)
 
     def get_primary_diagnosis(self) -> str:
         return self.primary_diagnosis or self.diagnosis or "Observation"
@@ -199,9 +218,10 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         await db.execute(select(models.Patient).limit(1))
         return {"status": "healthy", "database": "connected", "service": "patient-service"}
     except Exception as e:
+        logger.error("Health check failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database connection failed: {str(e)}"
+            detail="Service health check failed."
         )
 
 
@@ -292,8 +312,8 @@ async def register_patient(
         last_name=last_name,
         date_of_birth=dob,
         gender=patient_in.gender.upper(),
-        phone=patient_in.phone.strip() if patient_in.phone else None,
-        address=patient_in.address.strip() if patient_in.address else None
+        phone=sanitize_text(patient_in.phone, 30) if patient_in.phone else None,
+        address=sanitize_text(patient_in.address, 500) if patient_in.address else None
     )
 
     db.add(new_patient)
@@ -353,6 +373,8 @@ async def create_admission(
     patient = await db.get(models.Patient, admission_in.patient_id)
     if not patient:
         raise HTTPException(status_code=404, detail=f"Patient ID {admission_in.patient_id} does not exist.")
+    if not patient.is_active:
+        raise HTTPException(status_code=400, detail="Cannot admit a deactivated patient record.")
 
     active_stmt = select(models.Admission).where(
         and_(
@@ -366,12 +388,23 @@ async def create_admission(
 
     new_admission = models.Admission(
         patient_id=admission_in.patient_id,
-        primary_diagnosis=admission_in.get_primary_diagnosis(),
+        primary_diagnosis=sanitize_text(admission_in.get_primary_diagnosis(), 500),
         acuity_level=admission_in.acuity_level or "ESI_3",
-        notes=admission_in.notes
+        notes=sanitize_text(admission_in.notes, 1000)
     )
     db.add(new_admission)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        # Concurrency race caught by partial unique index uq_single_active_admission_per_patient
+        active_adm = (await db.execute(active_stmt)).scalars().first()
+        if active_adm:
+            return active_adm
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conflict: Patient already has an active admission."
+        )
     await db.refresh(new_admission)
     return new_admission
 
@@ -465,6 +498,9 @@ async def discharge_admission(
     if not admission:
         raise HTTPException(status_code=404, detail=f"Admission #{admission_id} not found.")
 
+    if admission.discharge_datetime is not None:
+        return {"status": "SUCCESS", "message": f"Admission #{admission_id} is already discharged."}
+
     admission.discharge_datetime = func.now()
 
     nurse_stmt = select(models.PatientNurseAssignment).where(
@@ -478,8 +514,34 @@ async def discharge_admission(
         na.status = "COMPLETED"
         na.end_datetime = func.now()
 
+    # Step 1: Commit clinical discharge in PostgreSQL FIRST to release locks before network I/O
     await db.commit()
-    return {"status": "SUCCESS", "message": f"Admission #{admission_id} successfully discharged."}
+
+    # Step 2: Unidirectional downstream call to release physical assets (bed, equipment) in bed-service
+    internal_headers = {
+        "X-User-Id": str(current_user.get("user_id", 0)),
+        "X-User-Role": str(current_user.get("role", "NURSE")),
+        "X-Internal-Token": INTERNAL_SERVICE_SECRET,
+    }
+    bed_release_status = "NOT_NOTIFIED"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                f"{BED_SERVICE_URL}/internal/admissions/{admission_id}/release",
+                headers=internal_headers
+            )
+            if resp.status_code == 200:
+                bed_release_status = "RELEASED"
+            else:
+                logger.warning("Bed service release returned status %s for admission #%s", resp.status_code, admission_id)
+    except Exception as e:
+        logger.warning("Could not reach bed-service to release assets for admission #%s: %s", admission_id, e)
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Admission #{admission_id} successfully discharged.",
+        "physical_assets_release": bed_release_status
+    }
 
 
 @app.post("/admissions/{admission_id}/assign-nurse", response_model=NurseAssignmentResponse, status_code=status.HTTP_201_CREATED)
@@ -546,3 +608,169 @@ async def get_admission_nurse_assignments(
     ).order_by(models.PatientNurseAssignment.start_datetime.desc())
     res = await db.execute(stmt)
     return res.scalars().all()
+
+
+# ===========================================================================
+# CLINICAL OBSERVATIONS & VITALS (APPEND-ONLY MEDICO-LEGAL LEDGER)
+# ===========================================================================
+
+class ObservationCreate(BaseModel):
+    heart_rate_bpm: Optional[int] = Field(None, ge=1, le=299, description="Heart rate in beats per minute")
+    systolic_bp: Optional[int] = Field(None, ge=1, le=349, description="Systolic blood pressure mmHg")
+    diastolic_bp: Optional[int] = Field(None, ge=1, le=249, description="Diastolic blood pressure mmHg")
+    oxygen_saturation_pct: Optional[float] = Field(None, ge=0.0, le=100.0, description="SpO2 percentage (0-100)")
+    temperature_celsius: Optional[float] = Field(None, ge=25.0, le=45.0, description="Core body temperature in Celsius")
+    respiratory_rate: Optional[int] = Field(None, ge=0, le=100, description="Breaths per minute")
+    notes: Optional[str] = Field(None, max_length=1000)
+    is_correction: bool = Field(False, description="True if this chart entry corrects a previous entry")
+    corrects_observation_id: Optional[int] = Field(None, description="ID of the prior observation being corrected")
+    correction_reason: Optional[str] = Field(None, max_length=500, description="Required clinical reason if is_correction is True")
+
+    @model_validator(mode="after")
+    def validate_correction(self):
+        if self.is_correction and not self.corrects_observation_id:
+            raise ValueError("corrects_observation_id is required when is_correction is True.")
+        if self.is_correction and not self.correction_reason:
+            raise ValueError("correction_reason is required when is_correction is True to maintain malpractice audit trail.")
+        return self
+
+
+class ObservationResponse(BaseModel):
+    observation_id: int
+    admission_id: int
+    recorded_by_user_id: int
+    observation_datetime: datetime
+    heart_rate_bpm: Optional[int] = None
+    systolic_bp: Optional[int] = None
+    diastolic_bp: Optional[int] = None
+    oxygen_saturation_pct: Optional[float] = None
+    temperature_celsius: Optional[float] = None
+    respiratory_rate: Optional[int] = None
+    notes: Optional[str] = None
+    is_correction: bool = False
+    corrects_observation_id: Optional[int] = None
+    correction_reason: Optional[str] = None
+    create_datetime: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+@app.post("/admissions/{admission_id}/observations", response_model=ObservationResponse, status_code=201)
+@app.post("/encounters/{admission_id}/observations", response_model=ObservationResponse, status_code=201)
+async def record_observation(
+    admission_id: int,
+    obs_in: ObservationCreate,
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Records an immutable clinical observation/vital sign or an explicit correction.
+    Under HIPAA / 21 CFR Part 11, observations cannot be updated or deleted.
+    """
+    admission = await db.get(models.Admission, admission_id)
+    if not admission:
+        raise HTTPException(status_code=404, detail="Admission record not found.")
+
+    if obs_in.is_correction:
+        prior = await db.get(models.PatientObservation, obs_in.corrects_observation_id)
+        if not prior or prior.admission_id != admission_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Prior observation #{obs_in.corrects_observation_id} does not exist for this admission."
+            )
+
+    user_id = current_user.get("user_id") or 0
+
+    obs = models.PatientObservation(
+        admission_id=admission_id,
+        recorded_by_user_id=user_id,
+        heart_rate_bpm=obs_in.heart_rate_bpm,
+        systolic_bp=obs_in.systolic_bp,
+        diastolic_bp=obs_in.diastolic_bp,
+        oxygen_saturation_pct=obs_in.oxygen_saturation_pct,
+        temperature_celsius=obs_in.temperature_celsius,
+        respiratory_rate=obs_in.respiratory_rate,
+        notes=sanitize_text(obs_in.notes, 1000),
+        is_correction=obs_in.is_correction,
+        corrects_observation_id=obs_in.corrects_observation_id,
+        correction_reason=sanitize_text(obs_in.correction_reason, 500)
+    )
+    db.add(obs)
+    await db.commit()
+    await db.refresh(obs)
+
+    # HIPAA audit trail
+    await log_audit(
+        db=db,
+        action="CHART_VITALS" if not obs_in.is_correction else "CORRECT_VITALS",
+        user_id=user_id,
+        resource_type="patient_observation",
+        resource_id=obs.observation_id,
+        details={"admission_id": admission_id, "is_correction": obs_in.is_correction}
+    )
+
+    return obs
+
+
+@app.get("/admissions/{admission_id}/observations", response_model=List[ObservationResponse])
+@app.get("/encounters/{admission_id}/observations", response_model=List[ObservationResponse])
+async def get_admission_observations(
+    admission_id: int,
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db)
+):
+    """Retrieves full chronological ledger of observations and corrections for an admission."""
+    stmt = select(models.PatientObservation).where(
+        models.PatientObservation.admission_id == admission_id
+    ).order_by(models.PatientObservation.observation_datetime.asc())
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
+
+# ===========================================================================
+# PATIENT LIFECYCLE: SOFT DEACTIVATION & HARD DELETE REJECTION (HIPAA COMPLIANCE)
+# ===========================================================================
+
+@app.put("/patient/{patient_id}/deactivate")
+@app.put("/patients/{patient_id}/deactivate")
+async def deactivate_patient(
+    patient_id: int,
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR)),
+    db: AsyncSession = Depends(get_db)
+):
+    """Soft-deactivates a patient record to prevent future admissions while maintaining legal audit trail."""
+    patient = await db.get(models.Patient, patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient record not found.")
+
+    patient.is_active = False
+    await db.commit()
+
+    user_id = current_user.get("user_id") or 0
+    await log_audit(
+        db=db,
+        action="DEACTIVATE_PATIENT",
+        user_id=user_id,
+        resource_type="patient",
+        resource_id=patient_id,
+        details={"patient_name": f"{patient.first_name} {patient.last_name}"}
+    )
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Patient #{patient_id} ({patient.first_name} {patient.last_name}) deactivated."
+    }
+
+
+@app.delete("/patient/{patient_id}")
+@app.delete("/patients/{patient_id}")
+async def reject_delete_patient(patient_id: int):
+    """Explicitly reject hard deletion of patient records under HIPAA retention rules."""
+    return JSONResponse(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        headers={"Allow": "GET, POST, PUT"},
+        content={
+            "detail": "Hard deletion of healthcare records is strictly prohibited under HIPAA compliance. Use PUT /patient/{id}/deactivate."
+        }
+    )

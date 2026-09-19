@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
@@ -17,7 +18,7 @@ from sqlalchemy.orm import selectinload
 from database import get_db, init_db
 import models
 from redis_client import get_redis, lifespan as redis_lifespan
-from security import UserRole, require_roles
+from security import UserRole, require_roles, require_roles_or_internal
 
 logger = logging.getLogger("hip.bed")
 
@@ -42,6 +43,15 @@ app = FastAPI(
 )
 
 
+def sanitize_text(value: str | None, max_len: int = 500) -> str | None:
+    """Strip HTML tags and control characters from user input."""
+    if value is None:
+        return None
+    cleaned = re.sub(r'<[^>]+>', '', value)
+    cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', cleaned)
+    return cleaned[:max_len].strip()
+
+
 class BedCreate(BaseModel):
     bed_code: str = Field(..., min_length=2, max_length=30)
     department: str = Field(default="EMERGENCY")
@@ -55,9 +65,9 @@ class ReserveBedRequest(BaseModel):
     patient_id: Optional[int] = None
     expected_version: Optional[int] = None
     acuity_level: Optional[str] = "ESI_3"
-    primary_diagnosis: Optional[str] = None
-    diagnosis: Optional[str] = "Observation"
-    notes: Optional[str] = None
+    primary_diagnosis: Optional[str] = Field(None, max_length=500)
+    diagnosis: Optional[str] = Field("Observation", max_length=500)
+    notes: Optional[str] = Field(None, max_length=1000)
 
     def get_admission_id(self) -> Optional[int]:
         return self.admission_id or self.encounter_id
@@ -73,7 +83,7 @@ class BedTransferRequest(BaseModel):
 
 class EquipmentTypeCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=500)
 
 
 class EquipmentCreate(BaseModel):
@@ -95,7 +105,21 @@ class EquipmentAllocateRequest(BaseModel):
         return self.admission_id or self.encounter_id
 
 
-async def publish_event(redis: aioredis.Redis, event_type: str, data: dict, actor: Optional[str] = None):
+async def invalidate_grid_cache(redis: Optional[aioredis.Redis]):
+    """Safely invalidate the bed grid cache with non-blocking error suppression."""
+    if not redis:
+        return
+    try:
+        await redis.delete(BEDS_GRID_CACHE_KEY)
+    except Exception as e:
+        logger.warning("Failed to invalidate bed grid cache: %s", e)
+
+
+async def publish_event(redis: Optional[aioredis.Redis], event_type: str, data: dict, actor: Optional[str] = None):
+    """Safely publish an event to Redis Pub/Sub with non-blocking error capture."""
+    if not redis:
+        logger.warning("Redis client unavailable, skipping event %s", event_type)
+        return
     payload = {
         "event_type": event_type,
         "actor": actor or "system",
@@ -106,7 +130,7 @@ async def publish_event(redis: aioredis.Redis, event_type: str, data: dict, acto
         await redis.publish(BED_EVENTS_CHANNEL, json.dumps(payload))
         logger.info("Published event %s to '%s'", event_type, BED_EVENTS_CHANNEL)
     except Exception as e:
-        logger.warning("Failed to publish event %s: %s", event_type, e)
+        logger.critical("Dual-write degraded: Failed to publish event %s to Redis: %s", event_type, e)
 
 
 async def ensure_seed_data(db: AsyncSession):
@@ -163,14 +187,16 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         await db.execute(select(models.Bed).limit(1))
         return {"status": "healthy", "database": "connected", "service": "bed-service"}
     except Exception as e:
+        logger.error("Health check failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database connection failed: {str(e)}"
+            detail="Service health check failed."
         )
 
 
 @app.get("/grid")
 async def get_bed_grid(
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.CLEANING_CREW)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
@@ -260,7 +286,7 @@ async def create_bed(
     await db.commit()
     await db.refresh(new_bed)
 
-    await redis.delete(BEDS_GRID_CACHE_KEY)
+    await invalidate_grid_cache(redis)
     await publish_event(redis, "BED_CREATED", {
         "bed_id": new_bed.bed_id,
         "bed_code": new_bed.bed_code,
@@ -403,7 +429,7 @@ async def reserve_bed(
             detail="Database constraint violation: This bed or admission already has an active reservation."
         )
 
-    await redis.delete(BEDS_GRID_CACHE_KEY)
+    await invalidate_grid_cache(redis)
     await publish_event(redis, "BED_RESERVED", {
         "bed_id": bed.bed_id,
         "bed_code": bed_code.upper(),
@@ -469,7 +495,7 @@ async def confirm_admission(
         active_alloc.update_datetime = func.now()
 
     await db.commit()
-    await redis.delete(BEDS_GRID_CACHE_KEY)
+    await invalidate_grid_cache(redis)
     await publish_event(redis, "BED_OCCUPIED", {
         "bed_id": bed.bed_id,
         "bed_code": bed_code.upper(),
@@ -573,7 +599,7 @@ async def transfer_patient_bed(
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Database constraint violation during bed transfer.")
 
-    await redis.delete(BEDS_GRID_CACHE_KEY)
+    await invalidate_grid_cache(redis)
     await publish_event(redis, "BED_TRANSFER", {
         "from_bed": req.from_bed_code.upper(),
         "to_bed": req.to_bed_code.upper(),
@@ -674,7 +700,7 @@ async def discharge_bed(
             except httpx.RequestError as e:
                 logger.warning("Could not notify patient service during discharge: %s", e)
 
-    await redis.delete(BEDS_GRID_CACHE_KEY)
+    await invalidate_grid_cache(redis)
     await publish_event(redis, "BED_DIRTY", {
         "bed_id": bed.bed_id,
         "bed_code": bed_code.upper(),
@@ -687,6 +713,107 @@ async def discharge_bed(
     return {
         "status": "SUCCESS",
         "message": f"Patient discharged from {bed_code}. Bed transitioned to DIRTY. Cleaning task #{new_cleaning_task.cleaning_id} created."
+    }
+
+
+@app.post("/internal/admissions/{admission_id}/release")
+async def release_admission_assets(
+    admission_id: int,
+    current_user: Dict[str, Any] = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis)
+):
+    """
+    Internal endpoint called authoritatively by patient-service during clinical discharge.
+    Releases all active equipment and bed allocations tied to the admission.
+    Safely handles ambulatory/triage patients who never had a physical bed assigned.
+    """
+    released_equipment_ids = []
+
+    # 1. Multi-Equipment Asset Release (handles multiple active devices for this admission)
+    eq_alloc_stmt = select(models.EquipmentAllocation).where(
+        and_(
+            models.EquipmentAllocation.admission_id == admission_id,
+            models.EquipmentAllocation.status == "ACTIVE"
+        )
+    )
+    eq_allocs = (await db.execute(eq_alloc_stmt)).scalars().all()
+    for ea in eq_allocs:
+        ea.status = "RELEASED"
+        ea.end_datetime = func.now()
+        eq_item = await db.get(models.Equipment, ea.equipment_id)
+        if eq_item and eq_item.status == "ALLOCATED":
+            eq_item.status = "AVAILABLE"
+            eq_item.version += 1
+            released_equipment_ids.append(eq_item.equipment_id)
+
+    # 2. Bed Allocation Release (handles patients without a physical bed safely)
+    alloc_res = await db.execute(
+        select(models.BedAllocation).where(
+            and_(
+                models.BedAllocation.admission_id == admission_id,
+                models.BedAllocation.status.in_(["RESERVED", "OCCUPIED"]),
+                models.BedAllocation.end_datetime.is_(None)
+            )
+        )
+    )
+    active_alloc = alloc_res.scalars().first()
+
+    bed_released = False
+    released_bed_code = None
+    cleaning_task_id = None
+
+    if active_alloc:
+        active_alloc.status = "COMPLETED"
+        active_alloc.end_datetime = func.now()
+
+        bed = await db.get(models.Bed, active_alloc.bed_id)
+        if bed:
+            current_version = bed.version
+            stmt = (
+                update(models.Bed)
+                .where(
+                    and_(
+                        models.Bed.bed_id == bed.bed_id,
+                        models.Bed.version == current_version
+                    )
+                )
+                .values(status="DIRTY", version=current_version + 1, update_datetime=func.now())
+            )
+            await db.execute(stmt)
+
+            new_cleaning_task = models.CleaningTask(
+                bed_id=bed.bed_id,
+                allocation_id=active_alloc.allocation_id,
+                status="PENDING",
+                disinfection_notes=f"Auto-generated on clinical discharge of admission #{admission_id}"
+            )
+            db.add(new_cleaning_task)
+            await db.flush()
+            cleaning_task_id = new_cleaning_task.cleaning_id
+            released_bed_code = bed.bed_code
+            bed_released = True
+
+    # 3. MVCC SEQUENCE: Commit PostgreSQL transaction BEFORE Redis operations
+    await db.commit()
+
+    # 4. Redis cache invalidation and Pub/Sub ONLY after DB commit
+    if bed_released and released_bed_code:
+        await invalidate_grid_cache(redis)
+        await publish_event(redis, "BED_DIRTY", {
+            "bed_code": released_bed_code,
+            "discharged_admission_id": admission_id,
+            "cleaning_id": cleaning_task_id,
+            "status": "DIRTY"
+        }, actor=str(current_user.get("user_id", "system")))
+
+    return {
+        "status": "SUCCESS",
+        "admission_id": admission_id,
+        "bed_released": bed_released,
+        "bed_code": released_bed_code,
+        "cleaning_task_id": cleaning_task_id,
+        "released_equipment_count": len(released_equipment_ids)
     }
 
 
@@ -753,7 +880,7 @@ async def start_cleaning(
         task.bed.update_datetime = func.now()
 
     await db.commit()
-    await redis.delete(BEDS_GRID_CACHE_KEY)
+    await invalidate_grid_cache(redis)
     await publish_event(redis, "CLEANING_STARTED", {
         "cleaning_id": cleaning_id,
         "bed_id": task.bed_id,
@@ -786,7 +913,7 @@ async def complete_cleaning(
         task.bed.update_datetime = func.now()
 
     await db.commit()
-    await redis.delete(BEDS_GRID_CACHE_KEY)
+    await invalidate_grid_cache(redis)
     await publish_event(redis, "BED_AVAILABLE", {
         "cleaning_id": cleaning_id,
         "bed_id": task.bed_id,
@@ -798,7 +925,10 @@ async def complete_cleaning(
 
 
 @app.get("/equipment/types")
-async def get_equipment_types(db: AsyncSession = Depends(get_db)):
+async def get_equipment_types(
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    db: AsyncSession = Depends(get_db)
+):
     await ensure_seed_data(db)
     stmt = select(models.EquipmentType).order_by(models.EquipmentType.name)
     result = await db.execute(stmt)
@@ -807,7 +937,11 @@ async def get_equipment_types(db: AsyncSession = Depends(get_db)):
 
 
 @app.post("/equipment/types")
-async def create_equipment_type(req: EquipmentTypeCreate, db: AsyncSession = Depends(get_db)):
+async def create_equipment_type(
+    req: EquipmentTypeCreate,
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db)
+):
     existing = (await db.execute(select(models.EquipmentType).where(func.lower(models.EquipmentType.name) == req.name.strip().lower()))).scalars().first()
     if existing:
         raise HTTPException(status_code=400, detail="Equipment type already exists.")
@@ -820,7 +954,10 @@ async def create_equipment_type(req: EquipmentTypeCreate, db: AsyncSession = Dep
 
 
 @app.get("/equipment/list")
-async def get_equipment_list(db: AsyncSession = Depends(get_db)):
+async def get_equipment_list(
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    db: AsyncSession = Depends(get_db)
+):
     await ensure_seed_data(db)
     stmt = (
         select(models.Equipment)
@@ -856,7 +993,11 @@ async def get_equipment_list(db: AsyncSession = Depends(get_db)):
 
 
 @app.post("/equipment/create")
-async def create_equipment(req: EquipmentCreate, db: AsyncSession = Depends(get_db)):
+async def create_equipment(
+    req: EquipmentCreate,
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db)
+):
     exists = (await db.execute(select(models.Equipment).where(models.Equipment.serial_number == req.serial_number.upper()))).scalars().first()
     if exists:
         raise HTTPException(status_code=400, detail=f"Serial number {req.serial_number} already registered.")
@@ -970,7 +1111,7 @@ async def allocate_equipment(
             detail="Database constraint violation: This equipment item already has an active allocation."
         )
 
-    await redis.delete(BEDS_GRID_CACHE_KEY)
+    await invalidate_grid_cache(redis)
     await publish_event(redis, "EQUIPMENT_ALLOCATED", {
         "equipment_id": eq.equipment_id,
         "equipment_name": eq.equipment_name,
@@ -1006,6 +1147,6 @@ async def release_equipment(
         eq.version += 1
 
     await db.commit()
-    await redis.delete(BEDS_GRID_CACHE_KEY)
+    await invalidate_grid_cache(redis)
 
     return {"status": "SUCCESS", "message": f"Equipment allocation #{equipment_allocation_id} released."}

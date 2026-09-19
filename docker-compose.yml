@@ -16,16 +16,15 @@ services:
       dockerfile: Dockerfile
     container_name: hip-gateway
     ports:
-      - "8080:8000"  
-    volumes:
-      - ./gateway:/app
+      - "8080:8000"
     environment:
-      - ENV=development
+      - ENV=production
       - SECRET_KEY=${SECRET_KEY}
       - REDIS_URL=${REDIS_URL:-redis://hip-redis:6379}
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://hip-auth-service:8001}
       - PATIENT_SERVICE_URL=${PATIENT_SERVICE_URL:-http://hip-patient-service:8002}
       - BED_SERVICE_URL=${BED_SERVICE_URL:-http://hip-bed-service:8003}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
     networks:
       - hip-network
     depends_on:
@@ -40,15 +39,14 @@ services:
       context: ./services/auth-service
       dockerfile: Dockerfile
     container_name: hip-auth-service
-    expose:
-      - "8001"  # Internal communication only
-    volumes:
-      - ./services/auth-service:/app
+    ports:
+      - "8001:8001"
     environment:
-      - ENV=development
-      - DATABASE_URL=${DATABASE_URL} 
+      - ENV=production
+      - DATABASE_URL=${DATABASE_URL}
       - SECRET_KEY=${SECRET_KEY}
       - REDIS_URL=${REDIS_URL:-redis://hip-redis:6379}
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}
     networks:
       - hip-network
     depends_on:
@@ -61,13 +59,11 @@ services:
   patient-service:
     build: ./services/patient-service
     container_name: hip-patient-service
-    expose:
-      - "8002" 
-    volumes:
-      - ./services/patient-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8002 --reload
+    ports:
+      - "8002:8002"
+    command: uvicorn main:app --host 0.0.0.0 --port 8002
     environment:
-      - DATABASE_URL=${DATABASE_URL}  
+      - DATABASE_URL=${DATABASE_URL}
       - BED_SERVICE_URL=${BED_SERVICE_URL:-http://hip-bed-service:8003}
       - INTERNAL_SERVICE_SECRET=${INTERNAL_SERVICE_SECRET}
     networks:
@@ -80,14 +76,12 @@ services:
   bed-service:
     build: ./services/bed-service
     container_name: hip-bed-service
-    expose:
-      - "8003" 
-    volumes:
-      - ./services/bed-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8003 --reload
+    ports:
+      - "8003:8003"
+    command: uvicorn main:app --host 0.0.0.0 --port 8003
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=${REDIS_URL:-redis://hip-redis:6379}  
+      - REDIS_URL=${REDIS_URL:-redis://hip-redis:6379}
       - PATIENT_SERVICE_URL=${PATIENT_SERVICE_URL:-http://hip-patient-service:8002}
       - INTERNAL_SERVICE_SECRET=${INTERNAL_SERVICE_SECRET}
     networks:
@@ -107,7 +101,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -123,8 +117,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: hip-redis
-    ports:
-      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     networks:
