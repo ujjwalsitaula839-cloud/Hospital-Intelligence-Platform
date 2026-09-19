@@ -38,12 +38,29 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
+// 401 Response interceptor — auto-logout on unauthorized
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response?.status === 401) {
+            // Token expired or revoked — clear auth state
+            localStorage.removeItem('hip_access_token');
+            localStorage.removeItem('hip_refresh_token');
+            localStorage.removeItem('hip_user');
+            // Trigger page reload to show login
+            window.location.reload();
+        }
+        return Promise.reject(error);
+    }
+);
+
 // --- AUTHENTICATION SERVICES ---
 export const authService = {
     async login(data: LoginRequest): Promise<AuthResponse> {
         const res = await api.post<AuthResponse>('/auth/login', data);
         if (res.data.access_token) {
             localStorage.setItem('hip_access_token', res.data.access_token);
+            localStorage.setItem('hip_refresh_token', (res.data as any).refresh_token || '');
             localStorage.setItem('hip_user', JSON.stringify({
                 personnel_id: res.data.personnel_id,
                 username: res.data.username,
@@ -70,14 +87,40 @@ export const authService = {
         return res.data;
     },
 
+    async refresh(refreshToken: string): Promise<AuthResponse> {
+        const res = await api.post<AuthResponse>('/auth/refresh', { refresh_token: refreshToken });
+        if (res.data.access_token) {
+            localStorage.setItem('hip_access_token', res.data.access_token);
+            localStorage.setItem('hip_refresh_token', (res.data as any).refresh_token || '');
+            localStorage.setItem('hip_user', JSON.stringify({
+                personnel_id: res.data.personnel_id,
+                username: res.data.username,
+                full_name: res.data.full_name,
+                role: res.data.role,
+                department: res.data.department
+            }));
+        }
+        return res.data;
+    },
+
     logout() {
+        // Call backend logout to invalidate tokens server-side
+        const token = localStorage.getItem('hip_access_token');
+        if (token) {
+            api.post('/auth/logout').catch(() => {});  // Best-effort
+        }
         localStorage.removeItem('hip_access_token');
+        localStorage.removeItem('hip_refresh_token');
         localStorage.removeItem('hip_user');
     },
 
     getCurrentUser(): Partial<PersonnelProfile> | null {
         const raw = localStorage.getItem('hip_user');
         return raw ? JSON.parse(raw) : null;
+    },
+
+    getToken(): string | null {
+        return localStorage.getItem('hip_access_token');
     }
 };
 

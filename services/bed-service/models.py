@@ -123,3 +123,7 @@ class CleaningTask(Base):
     bed = relationship("Bed", back_populates="cleaning_tasks")
 
     bed_allocation = relationship("BedAllocation", back_populates="cleaning_tasks")
+
+
+# Import audit models so they are registered with Base.metadata.create_all
+from audit import AuditLog  # noqa: E402, F401

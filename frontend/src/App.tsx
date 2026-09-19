@@ -1,20 +1,19 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DashboardView } from './views/DashboardView';
-import { Activity, User } from 'lucide-react';
-import type { UserRole } from './types/auth';
+import { LoginView } from './views/LoginView';
+import { Activity, LogOut, User, Loader2 } from 'lucide-react';
 
-export const App: React.FC = () => {
-    const [currentRole, setCurrentRole] = useState<UserRole>('NURSE');
-    const [userName, setUserName] = useState('Charge Nurse Sarah, RN');
+const AuthenticatedApp: React.FC = () => {
+    const { user, logout, isLoading } = useAuth();
 
-    const handleRoleChange = (role: UserRole) => {
-        setCurrentRole(role);
-        if (role === 'NURSE') setUserName('Charge Nurse Sarah, RN');
-        else if (role === 'DOCTOR') setUserName('Dr. Michael Chen, MD');
-        else if (role === 'CLEANING_CREW') setUserName('Marcus Vance (EVS Lead)');
-        else if (role === 'PHARMACY') setUserName('Elena Rostova, PharmD');
-        else setUserName('Admin Hospital Operations');
-    };
+    if (isLoading) {
+        return (
+            <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+                <Loader2 className="w-8 h-8 text-sky-500 animate-spin" />
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-sky-500 selection:text-white">
@@ -30,38 +29,41 @@ export const App: React.FC = () => {
                             <div className="flex items-center gap-2">
                                 <span className="font-extrabold text-base tracking-tight text-white">HIP</span>
                                 <span className="text-2xs font-semibold px-1.5 py-0.5 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded">
-                                    v2.0 HIPAA
+                                    v3.0 HIPAA
                                 </span>
                             </div>
                             <p className="text-2xs text-slate-400">Hospital Intelligence Platform</p>
                         </div>
                     </div>
 
-                    {/* Active Live Stream Indicator & Role Switcher */}
+                    {/* User Info & Actions */}
                     <div className="flex items-center gap-4">
                         <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
                             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
                             <span className="text-2xs font-medium text-emerald-400">WebSocket Live Sync</span>
                         </div>
 
-                        {/* Role Simulator */}
+                        {/* Current User */}
                         <div className="flex items-center gap-2 bg-slate-950/80 p-1.5 rounded-xl border border-slate-800">
                             <User className="w-3.5 h-3.5 text-slate-400 ml-1" />
                             <div className="text-left hidden md:block">
-                                <span className="text-2xs font-bold text-white block">{userName}</span>
+                                <span className="text-2xs font-bold text-white block">{user?.full_name || 'User'}</span>
+                                <span className="text-2xs text-slate-400 block">{user?.role || ''} • {user?.department || ''}</span>
                             </div>
-                            <select
-                                value={currentRole}
-                                onChange={(e) => handleRoleChange(e.target.value as UserRole)}
-                                className="bg-slate-900 border border-slate-700 text-2xs text-sky-300 font-semibold rounded-lg px-2 py-1 outline-none cursor-pointer"
-                            >
-                                <option value="NURSE">Role: Charge Nurse</option>
-                                <option value="DOCTOR">Role: Attending MD</option>
-                                <option value="CLEANING_CREW">Role: EVS Cleaning Crew</option>
-                                <option value="PHARMACY">Role: Pharmacist</option>
-                                <option value="ADMIN">Role: Admin Operations</option>
-                            </select>
+                            <span className="text-2xs font-semibold px-2 py-0.5 bg-sky-500/10 text-sky-300 border border-sky-500/20 rounded-lg">
+                                {user?.role || 'USER'}
+                            </span>
                         </div>
+
+                        {/* Logout Button */}
+                        <button
+                            onClick={logout}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg hover:bg-red-500/20 transition-colors text-xs font-semibold"
+                            title="Sign out"
+                        >
+                            <LogOut className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Sign Out</span>
+                        </button>
                     </div>
                 </div>
             </header>
@@ -76,6 +78,32 @@ export const App: React.FC = () => {
                 <p>Hospital Intelligence Platform (HIP) • HIPAA Compliant Real-Time Orchestration • PostgreSQL / Redis Mesh</p>
             </footer>
         </div>
+    );
+};
+
+const AppRouter: React.FC = () => {
+    const { isAuthenticated, isLoading } = useAuth();
+
+    if (isLoading) {
+        return (
+            <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+                <Loader2 className="w-8 h-8 text-sky-500 animate-spin" />
+            </div>
+        );
+    }
+
+    if (!isAuthenticated) {
+        return <LoginView />;
+    }
+
+    return <AuthenticatedApp />;
+};
+
+export const App: React.FC = () => {
+    return (
+        <AuthProvider>
+            <AppRouter />
+        </AuthProvider>
     );
 };
 

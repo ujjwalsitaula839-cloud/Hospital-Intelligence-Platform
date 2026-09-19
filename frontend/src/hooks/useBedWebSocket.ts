@@ -5,15 +5,22 @@ export function useBedWebSocket(onMessage: (data: any) => void) {
     const wsRef = useRef<WebSocket | null>(null);
 
     useEffect(() => {
-        // Connect to Vite's proxy route or direct backend
+        // Get the current auth token for WebSocket authentication
+        const token = localStorage.getItem('hip_access_token');
+        if (!token) {
+            console.warn('[WS] No auth token available. WebSocket connection skipped.');
+            return;
+        }
+
+        // Connect with token as query parameter for authentication
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/beds`;
+        const wsUrl = `${protocol}//${window.location.host}/ws/beds?token=${encodeURIComponent(token)}`;
 
         const socket = new WebSocket(wsUrl);
         wsRef.current = socket;
 
         socket.onopen = () => {
-            console.log('[WS] Connected to live bed stream');
+            console.log('[WS] Connected to live bed stream (authenticated)');
         };
 
         socket.onmessage = (event) => {
@@ -27,6 +34,13 @@ export function useBedWebSocket(onMessage: (data: any) => void) {
 
         socket.onerror = (err) => {
             console.error('[WS Error]', err);
+        };
+
+        socket.onclose = (event) => {
+            if (event.code === 4001) {
+                console.warn('[WS] Authentication failed. Token may be expired.');
+                // Could trigger re-authentication here
+            }
         };
 
         return () => {

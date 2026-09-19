@@ -35,6 +35,13 @@ def require_roles(*allowed_roles: UserRole):
                 detail="Authentication required: missing verified identity headers."
             )
 
+        # MED-2 FIX: Safe integer parsing
+        if not x_user_id.isdigit():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user identity."
+            )
+
         if x_user_role.upper() not in allowed_values:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -81,6 +88,13 @@ def require_roles_or_internal(*allowed_roles: UserRole):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required: missing verified identity headers or internal service token."
+            )
+
+        # MED-2 FIX: Safe integer parsing
+        if not x_user_id.isdigit():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user identity."
             )
 
         if x_user_role.upper() not in allowed_values:

@@ -29,3 +29,6 @@ redis_data/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Scratch / temporary scripts
+scratch/
