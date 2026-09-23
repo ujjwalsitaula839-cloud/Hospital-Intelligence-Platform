@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 import httpx
 import asyncpg
-import json
 from dotenv import load_dotenv
 
 # Load local environment variables from .env
@@ -17,7 +16,7 @@ pg_user = os.getenv("POSTGRES_USER", "hip_admin")
 pg_pass = os.getenv("POSTGRES_PASSWORD", "")
 pg_db = os.getenv("POSTGRES_DB", "hospital_intelligence")
 pg_host = os.getenv("POSTGRES_HOST", "localhost")
-pg_port = os.getenv("POSTGRES_PORT", "5433")
+pg_port = os.getenv("POSTGRES_PORT", "5431")
 
 default_pg_dsn = f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
 PG_DSN = os.getenv("TEST_PG_DSN", default_pg_dsn)
@@ -35,6 +34,9 @@ def test_result(name: str, condition: bool, detail: str = ""):
     else:
         failed += 1
         print(f"  [FAIL] {name} -- {detail}")
+
+
+test_result.__test__ = False
 
 
 async def register_and_login(client: httpx.AsyncClient, username: str, email: str, full_name: str, role: str, department: str = "EMERGENCY") -> dict:
@@ -56,7 +58,6 @@ async def register_and_login(client: httpx.AsyncClient, username: str, email: st
 
 
 async def run_all_tests():
-    global passed, failed
     print("=" * 70)
     print("   HIP RBAC, CONCURRENCY & SECURITY VERIFICATION TEST SUITE")
     print("=" * 70)
@@ -69,6 +70,7 @@ async def run_all_tests():
         await conn.execute("DELETE FROM bed_allocation;")
         await conn.execute("UPDATE bed SET status = 'AVAILABLE', version = 1;")
         await conn.execute("UPDATE equipment SET status = 'AVAILABLE', version = 1;")
+        await conn.execute("UPDATE personnel SET is_active = true WHERE email IN ('carol@hospital.org', 'bob@hospital.org', 'alice@hospital.org');")
     finally:
         await conn.close()
 

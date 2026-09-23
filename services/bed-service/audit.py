@@ -1,7 +1,6 @@
 """Audit logging module for bed-service. HIPAA compliance requirement."""
 import json
 import logging
-from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import Column, Integer, String, DateTime, Text

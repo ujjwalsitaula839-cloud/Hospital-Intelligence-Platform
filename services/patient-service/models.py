@@ -108,4 +108,11 @@ class PatientObservation(Base):
 
 
 # Import audit models so they are registered with Base.metadata.create_all
-from audit import AuditLog  # noqa: E402, F401
+from audit import AuditLog
+
+__all__ = [
+    "Patient",
+    "Admission",
+    "PatientObservation",
+    "AuditLog"
+]

@@ -147,6 +147,36 @@ async def add_security_headers(request: Request, call_next):
 bearer_scheme = APIKeyHeader(name="Authorization", auto_error=False, description="Format: Bearer <JWT_TOKEN>")
 
 
+def _extract_bearer_token(auth_header: Optional[str]) -> Optional[str]:
+    if not auth_header:
+        return None
+    raw = auth_header.strip()
+    if raw.lower().startswith("bearer "):
+        raw = raw[7:].strip()
+    token = raw.strip('"').strip("'")
+    if '"' in token:
+        token = token.split('"', 1)[0].strip()
+    if ',' in token:
+        token = token.split(',', 1)[0].strip()
+    return token or None
+
+
+async def _check_token_revocation(user_id: str, issued_at: float) -> bool:
+    redis = aioredis.from_url(REDIS_URL, decode_responses=True)
+    try:
+        last_logout = await redis.get(f"last_logout:{user_id}")
+        return bool(last_logout and issued_at < float(last_logout))
+    finally:
+        await redis.aclose()
+
+
+ALLOWED_RESET_ROUTES = {
+    ("POST", "/auth/force-reset-password"),
+    ("POST", "/auth/logout"),
+    ("GET", "/auth/me"),
+}
+
+
 # --- User context extraction middleware ---
 @app.middleware("http")
 async def extract_user_context(request: Request, call_next):
@@ -156,20 +186,9 @@ async def extract_user_context(request: Request, call_next):
     request.state.department = None
     request.state.full_name = None
 
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
+    token = _extract_bearer_token(request.headers.get("Authorization"))
+    if not token:
         return await call_next(request)
-
-    raw_val = auth_header.strip()
-    if raw_val.lower().startswith("bearer "):
-        raw_val = raw_val[7:].strip()
-
-    # Sanitize accidental copy-paste artifacts like quotes or subsequent json keys
-    token = raw_val.strip('"').strip("'")
-    if '"' in token:
-        token = token.split('"', 1)[0].strip()
-    if ',' in token:
-        token = token.split(',', 1)[0].strip()
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -178,37 +197,21 @@ async def extract_user_context(request: Request, call_next):
         return await call_next(request)
 
     user_id = payload.get("sub")
-    token_issued_at = payload.get("iat")
-
-    if token_issued_at and user_id:
-        redis = aioredis.from_url(REDIS_URL, decode_responses=True)
-        try:
-            last_logout = await redis.get(f"last_logout:{user_id}")
-            if last_logout and token_issued_at < float(last_logout):
-                return JSONResponse(
-                    status_code=401,
-                    content={"detail": "Token has been revoked by logout. Please log in again."}
-                )
-        finally:
-            await redis.aclose()
+    issued_at = payload.get("iat")
+    if issued_at and user_id and await _check_token_revocation(user_id, issued_at):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Token has been revoked by logout. Please log in again."}
+        )
 
     request.state.user_id = user_id
     request.state.role = payload.get("role")
-    # Username, department, full_name may not be in JWT (LOW-1 fix — reduced payload)
-    # Forward what we have; downstream services can look up additional fields if needed
     request.state.username = payload.get("username")
     request.state.department = payload.get("department")
     request.state.full_name = payload.get("full_name")
 
-    # ── PASSWORD-RESET GATE ──
     # Restricted tokens (must_change_password=True) are blocked from all clinical routes.
-    # Only the password reset flow, logout, and profile endpoints are accessible.
     if payload.get("must_change_password"):
-        ALLOWED_RESET_ROUTES = {
-            ("POST", "/auth/force-reset-password"),
-            ("POST", "/auth/logout"),
-            ("GET", "/auth/me"),
-        }
         req_pair = (request.method.upper(), request.url.path.rstrip("/"))
         if req_pair not in ALLOWED_RESET_ROUTES:
             return JSONResponse(
@@ -371,49 +374,67 @@ async def clear_idempotency(redis_url: str, key: str):
         logger.warning("Failed to clear idempotency key: %s", e)
 
 
-async def forward_request(request: Request, service_name: str, path: str):
-    global http_client
-    if http_client is None:
-        return JSONResponse(status_code=500, content={"detail": "Gateway HTTP Client uninitialized."})
-
-    config = SERVICES_CONFIG[service_name]
-    clean_path = urllib.parse.unquote(path).lstrip("/")
-    target_url = f"{config['url']}/{clean_path}" if config["strip_prefix"] else f"{config['url']}/{service_name}/{clean_path}"
-
-    has_body = request.method.lower() in BODY_METHODS
-    body = await request.body() if has_body else None
-
-    # Lightweight Redis-backed idempotency protection on mutating actions
-    idempotency_key = request.headers.get("idempotency-key") or request.headers.get("x-idempotency-key")
-    redis_idemp_key = None
-    if idempotency_key and has_body:
-        user_id_part = str(request.state.user_id) if request.state.user_id else "anon"
-        redis_idemp_key = f"idempotency:{user_id_part}:{request.method.upper()}:{service_name}:{clean_path}:{idempotency_key}"
-        cached_resp = await check_idempotency(REDIS_URL, redis_idemp_key)
-        if cached_resp is not None:
-            return cached_resp
-
-    # Invariant: Normalize keys with .lower() to strip hop-by-hop and client-supplied x-user-* / x-internal-* headers
-    headers_to_forward = {
+def _prepare_forward_headers(request: Request) -> dict:
+    headers = {
         k: v for k, v in request.headers.items()
         if k.lower() not in HOP_BY_HOP_HEADERS
         and not k.lower().startswith("x-user-")
         and not k.lower().startswith("x-internal-")
     }
-
     if request.client:
-        headers_to_forward["X-Forwarded-For"] = request.client.host
+        headers["X-Forwarded-For"] = request.client.host
+    for attr, name in [
+        ("user_id", "X-User-Id"),
+        ("username", "X-User-Username"),
+        ("role", "X-User-Role"),
+        ("department", "X-User-Department"),
+        ("full_name", "X-User-Fullname"),
+    ]:
+        val = getattr(request.state, attr, None)
+        if val:
+            headers[name] = str(val)
+    return headers
 
-    if request.state.user_id:
-        headers_to_forward["X-User-Id"] = str(request.state.user_id)
-    if request.state.username:
-        headers_to_forward["X-User-Username"] = str(request.state.username)
-    if request.state.role:
-        headers_to_forward["X-User-Role"] = str(request.state.role)
-    if request.state.department:
-        headers_to_forward["X-User-Department"] = str(request.state.department)
-    if request.state.full_name:
-        headers_to_forward["X-User-Fullname"] = str(request.state.full_name)
+
+def _build_idempotency_key(request: Request, has_body: bool, service: str, path: str) -> Optional[str]:
+    key = request.headers.get("idempotency-key") or request.headers.get("x-idempotency-key")
+    if not key or not has_body:
+        return None
+    user_part = str(request.state.user_id or "anon")
+    return f"idempotency:{user_part}:{request.method.upper()}:{service}:{path}:{key}"
+
+
+def _build_target_url(service_name: str, clean_path: str) -> str:
+    config = SERVICES_CONFIG[service_name]
+    return f"{config['url']}/{clean_path}" if config["strip_prefix"] else f"{config['url']}/{service_name}/{clean_path}"
+
+
+async def _update_idempotency_cache(key: Optional[str], status_code: int, text: str) -> None:
+    if not key:
+        return
+    if status_code < 500:
+        await save_idempotency(REDIS_URL, key, status_code, text)
+    else:
+        await clear_idempotency(REDIS_URL, key)
+
+
+async def forward_request(request: Request, service_name: str, path: str):
+    if http_client is None:
+        return JSONResponse(status_code=500, content={"detail": "Gateway HTTP Client uninitialized."})
+
+    clean_path = urllib.parse.unquote(path).lstrip("/")
+    target_url = _build_target_url(service_name, clean_path)
+
+    has_body = request.method.lower() in BODY_METHODS
+    body = await request.body() if has_body else None
+
+    redis_idemp_key = _build_idempotency_key(request, has_body, service_name, clean_path)
+    if redis_idemp_key:
+        cached_resp = await check_idempotency(REDIS_URL, redis_idemp_key)
+        if cached_resp is not None:
+            return cached_resp
+
+    headers_to_forward = _prepare_forward_headers(request)
 
     try:
         response = await http_client.request(
@@ -429,11 +450,7 @@ async def forward_request(request: Request, service_name: str, path: str):
             if k.lower() not in HOP_BY_HOP_HEADERS
         }
 
-        # Cache completed response if idempotency key was supplied
-        if redis_idemp_key and response.status_code < 500:
-            await save_idempotency(REDIS_URL, redis_idemp_key, response.status_code, response.text)
-        elif redis_idemp_key and response.status_code >= 500:
-            await clear_idempotency(REDIS_URL, redis_idemp_key)
+        await _update_idempotency_cache(redis_idemp_key, response.status_code, response.text)
 
         return Response(
             content=response.content,
@@ -446,7 +463,7 @@ async def forward_request(request: Request, service_name: str, path: str):
         logger.error("Downstream communication failure at %s: %s", target_url, e)
         return JSONResponse(
             status_code=503,
-            content={"detail": config["error_msg"]}
+            content={"detail": SERVICES_CONFIG[service_name]["error_msg"]}
         )
 
 

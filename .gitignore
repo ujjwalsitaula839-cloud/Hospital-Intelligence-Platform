@@ -10,12 +10,24 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+.coverage
+htmlcov/
 
-# Environment secrets (NEVER COMMIT REAL SECRETS)
+# Environment secrets & config (NEVER COMMIT REAL SECRETS)
 .env
 *.env
 .env.*
+.env*.local
 !.env.example
+docker-compose.override.yml
+
+# Cryptographic Keys & Certificates
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+*.cer
 
 # Local database storage & Docker data volumes
 postgres_data/
@@ -24,11 +36,22 @@ redis_data/
 *.db
 *.sqlite3
 
+# Logs
+*.log
+logs/
+
 # IDE / System files
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Node / Frontend build artifacts
+node_modules/
+dist/
+dist-ssr/
+.eslintcache
 
 # Scratch / temporary scripts
-scratch/
+scratch/

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey, Boolean, Index, text
+from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey, Index, text
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
@@ -124,6 +124,25 @@ class CleaningTask(Base):
 
     bed_allocation = relationship("BedAllocation", back_populates="cleaning_tasks")
 
+    __table_args__ = (
+        Index(
+            "uq_single_active_cleaning_task_per_bed",
+            "bed_id",
+            unique=True,
+            postgresql_where=text("status IN ('PENDING', 'IN_PROGRESS')"),
+        ),
+    )
+
 
 # Import audit models so they are registered with Base.metadata.create_all
-from audit import AuditLog  # noqa: E402, F401
+from audit import AuditLog
+
+__all__ = [
+    "Bed",
+    "BedAllocation",
+    "EquipmentType",
+    "Equipment",
+    "EquipmentAllocation",
+    "CleaningTask",
+    "AuditLog"
+]

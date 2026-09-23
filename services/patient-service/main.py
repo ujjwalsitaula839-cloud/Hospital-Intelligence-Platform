@@ -59,6 +59,27 @@ class PatientCreate(BaseModel):
         return normalized
 
 
+class PatientUpdate(BaseModel):
+    first_name: Optional[str] = Field(None, min_length=1, max_length=50)
+    middle_name: Optional[str] = Field(None, max_length=50)
+    last_name: Optional[str] = Field(None, min_length=1, max_length=50)
+    date_of_birth: Optional[date] = None
+    gender: Optional[str] = None
+    phone: Optional[str] = Field(None, max_length=30)
+    address: Optional[str] = None
+    is_active: Optional[bool] = None
+
+    @field_validator("gender")
+    @classmethod
+    def validate_gender(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        normalized = v.upper().strip()
+        if normalized not in {"MALE", "FEMALE", "OTHER"}:
+            raise ValueError("Gender must be MALE, FEMALE, or OTHER")
+        return normalized
+
+
 class PatientResponse(BaseModel):
     patient_id: int
     first_name: str
@@ -264,6 +285,23 @@ async def search_patients(
     return result.scalars().all()
 
 
+def _parse_patient_identity(patient_in: PatientCreate):
+    first, middle, last = patient_in.first_name, patient_in.middle_name, patient_in.last_name
+    if not first and patient_in.name:
+        parts = patient_in.name.strip().split()
+        first = parts[0]
+        if len(parts) > 2:
+            middle, last = " ".join(parts[1:-1]), parts[-1]
+        elif len(parts) == 2:
+            last = parts[1]
+
+    dob = patient_in.date_of_birth or date(date.today().year - (patient_in.age or 30), 1, 1)
+    clean_first = (first or "Patient").strip().title()
+    clean_middle = middle.strip().title() if middle else None
+    clean_last = (last or "Unknown").strip().title()
+    return clean_first, clean_middle, clean_last, dob
+
+
 @app.post("/register", response_model=PatientResponse, status_code=status.HTTP_201_CREATED)
 async def register_patient(
     patient_in: PatientCreate,
@@ -271,51 +309,26 @@ async def register_patient(
     db: AsyncSession = Depends(get_db)
 ):
     """Registers patient identity. Returns existing record if exact name + DOB matches."""
-    first_name = patient_in.first_name
-    middle_name = patient_in.middle_name
-    last_name = patient_in.last_name
-    dob = patient_in.date_of_birth
-
-    if not first_name and patient_in.name:
-        parts = patient_in.name.strip().split()
-        first_name = parts[0]
-        if len(parts) > 2:
-            middle_name = " ".join(parts[1:-1])
-            last_name = parts[-1]
-        elif len(parts) == 2:
-            last_name = parts[1]
-        else:
-            last_name = "Unknown"
-
-    first_name = (first_name or "Patient").strip().title()
-    last_name = (last_name or "Unknown").strip().title()
-    middle_name = middle_name.strip().title() if middle_name else None
-
-    if not dob:
-        age_years = patient_in.age if patient_in.age is not None else 30
-        dob = date(date.today().year - age_years, 1, 1)
+    first, middle, last, dob = _parse_patient_identity(patient_in)
 
     match_stmt = select(models.Patient).where(
-        and_(
-            func.lower(models.Patient.first_name) == first_name.lower(),
-            func.lower(models.Patient.last_name) == last_name.lower(),
-            models.Patient.date_of_birth == dob
-        )
+        func.lower(models.Patient.first_name) == first.lower(),
+        func.lower(models.Patient.last_name) == last.lower(),
+        models.Patient.date_of_birth == dob
     )
     existing_match = (await db.execute(match_stmt)).scalars().first()
     if existing_match:
         return existing_match
 
     new_patient = models.Patient(
-        first_name=first_name,
-        middle_name=middle_name,
-        last_name=last_name,
+        first_name=first,
+        middle_name=middle,
+        last_name=last,
         date_of_birth=dob,
         gender=patient_in.gender.upper(),
-        phone=sanitize_text(patient_in.phone, 30) if patient_in.phone else None,
-        address=sanitize_text(patient_in.address, 500) if patient_in.address else None
+        phone=sanitize_text(patient_in.phone, 30),
+        address=sanitize_text(patient_in.address, 500)
     )
-
     db.add(new_patient)
     await db.commit()
     await db.refresh(new_patient)
@@ -729,6 +742,57 @@ async def get_admission_observations(
 
 
 # ===========================================================================
+# PATIENT PROFILE EDIT & LIFECYCLE (HIPAA AUDITED)
+# ===========================================================================
+
+@app.put("/patient/{patient_id}", response_model=PatientResponse)
+@app.put("/patients/{patient_id}", response_model=PatientResponse)
+async def update_patient(
+    patient_id: int,
+    patient_in: PatientUpdate,
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR, UserRole.NURSE)),
+    db: AsyncSession = Depends(get_db)
+):
+    """Updates demographic information for an existing patient (phone, address, names, etc.)."""
+    patient = await db.get(models.Patient, patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient record not found.")
+
+    updates = patient_in.model_dump(exclude_unset=True)
+    if "first_name" in updates and updates["first_name"]:
+        patient.first_name = updates["first_name"].strip().title()
+    if "middle_name" in updates:
+        patient.middle_name = updates["middle_name"].strip().title() if updates["middle_name"] else None
+    if "last_name" in updates and updates["last_name"]:
+        patient.last_name = updates["last_name"].strip().title()
+    if "date_of_birth" in updates and updates["date_of_birth"]:
+        patient.date_of_birth = updates["date_of_birth"]
+    if "gender" in updates and updates["gender"]:
+        patient.gender = updates["gender"]
+    if "phone" in updates:
+        patient.phone = sanitize_text(updates["phone"], 30)
+    if "address" in updates:
+        patient.address = sanitize_text(updates["address"], 500)
+    if "is_active" in updates:
+        patient.is_active = updates["is_active"]
+
+    await db.commit()
+    await db.refresh(patient)
+
+    user_id = current_user.get("user_id") or 0
+    await log_audit(
+        db=db,
+        action="UPDATE_PATIENT",
+        user_id=user_id,
+        resource_type="patient",
+        resource_id=patient_id,
+        details={"patient_name": f"{patient.first_name} {patient.last_name}"}
+    )
+
+    return patient
+
+
+# ===========================================================================
 # PATIENT LIFECYCLE: SOFT DEACTIVATION & HARD DELETE REJECTION (HIPAA COMPLIANCE)
 # ===========================================================================
 
@@ -760,6 +824,37 @@ async def deactivate_patient(
     return {
         "status": "SUCCESS",
         "message": f"Patient #{patient_id} ({patient.first_name} {patient.last_name}) deactivated."
+    }
+
+
+@app.put("/patient/{patient_id}/activate")
+@app.put("/patients/{patient_id}/activate")
+async def activate_patient(
+    patient_id: int,
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR)),
+    db: AsyncSession = Depends(get_db)
+):
+    """Reactivates a patient record for clinical admissions."""
+    patient = await db.get(models.Patient, patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient record not found.")
+
+    patient.is_active = True
+    await db.commit()
+
+    user_id = current_user.get("user_id") or 0
+    await log_audit(
+        db=db,
+        action="ACTIVATE_PATIENT",
+        user_id=user_id,
+        resource_type="patient",
+        resource_id=patient_id,
+        details={"patient_name": f"{patient.first_name} {patient.last_name}"}
+    )
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Patient #{patient_id} ({patient.first_name} {patient.last_name}) reactivated."
     }
 
 

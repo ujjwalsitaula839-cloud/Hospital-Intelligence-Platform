@@ -94,24 +94,4 @@ def get_current_user(
         "username": x_user_username,
         "department": x_user_department,
         "full_name": x_user_fullname,
-    }
-
-
-def get_optional_user(
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
-    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
-    x_user_username: Optional[str] = Header(None, alias="X-User-Username"),
-    x_user_department: Optional[str] = Header(None, alias="X-User-Department"),
-    x_user_fullname: Optional[str] = Header(None, alias="X-User-Fullname"),
-) -> Optional[Dict[str, Any]]:
-    """Dependency that extracts user if present, returns None if not authenticated."""
-    if not x_user_id or not x_user_role or not x_user_id.isdigit():
-        return None
-
-    return {
-        "user_id": int(x_user_id),
-        "role": x_user_role.upper(),
-        "username": x_user_username,
-        "department": x_user_department,
-        "full_name": x_user_fullname,
-    }
+    }
