@@ -7,7 +7,7 @@ import os
 import secrets
 from typing import Dict, Any, List, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 import jwt
@@ -19,7 +19,7 @@ from database import get_db, init_db
 import models
 import schemas
 import security
-from security import UserRole, require_roles, get_current_user, get_optional_user
+from security import UserRole, require_roles, get_current_user
 
 logger = logging.getLogger("hip.auth")
 
@@ -117,13 +117,6 @@ def get_client_ip(request: Request) -> str:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
-
-
-def generate_temporary_password() -> str:
-    """Generate a cryptographically random temporary password that passes strength rules."""
-    # secrets.token_urlsafe produces base64url chars (a-z, A-Z, 0-9, -, _)
-    # Append fixed suffix to guarantee uppercase, digit, and special char requirements.
-    return secrets.token_urlsafe(12) + "A1!"
 
 
 async def check_password_history(db: AsyncSession, personnel_id: int, new_password: str) -> bool:
@@ -260,8 +253,8 @@ async def provision_staff(
     if email_exists.scalars().first():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered.")
 
-    # Auto-generate high-entropy temporary password
-    temp_password = generate_temporary_password()
+    # Auto-generate high-entropy temporary password (base64url + complexity suffix)
+    temp_password = secrets.token_urlsafe(12) + "A1!"
     hashed_pw = await run_in_threadpool(security.hashed_password, temp_password)
 
     new_personnel = models.Personnel(
@@ -457,9 +450,6 @@ async def force_reset_password(
                 detail="Password reset not required. Use /change-password instead."
             )
 
-        if body.new_password != body.confirm_password:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Passwords do not match.")
-
         # Check password history (bcrypt in threadpool)
         is_reused = await check_password_history(db, user_id, body.new_password)
         if is_reused:
@@ -559,9 +549,6 @@ async def change_password(
             )
             await db.commit()
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect.")
-
-        if body.new_password != body.confirm_password:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Passwords do not match.")
 
         # Check password history
         is_reused = await check_password_history(db, user_id, body.new_password)
@@ -803,6 +790,12 @@ async def deactivate_personnel(
     db: AsyncSession = Depends(get_db)
 ):
     """Soft-deactivate a personnel account without deleting historical records."""
+    if personnel_id == current_user["user_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot deactivate your own administrator account."
+        )
+
     personnel = await db.get(models.Personnel, personnel_id)
     if not personnel:
         raise HTTPException(status_code=404, detail="Personnel not found.")
@@ -821,6 +814,37 @@ async def deactivate_personnel(
     await db.commit()
 
     return {"status": "SUCCESS", "message": f"Personnel {personnel.username} deactivated (is_active=False). All tokens revoked. History preserved."}
+
+
+# ===========================================================================
+# ACTIVATE — Admin only
+# ===========================================================================
+
+@app.put("/personnel/{personnel_id}/activate")
+async def activate_personnel(
+    personnel_id: int,
+    request: Request,
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db)
+):
+    """Reactivate a previously deactivated personnel account."""
+    personnel = await db.get(models.Personnel, personnel_id)
+    if not personnel:
+        raise HTTPException(status_code=404, detail="Personnel not found.")
+
+    personnel.is_active = True
+    await db.commit()
+
+    client_ip = get_client_ip(request)
+    await log_audit(
+        db, "ACTIVATE", user_id=current_user["user_id"],
+        resource_type="PERSONNEL", resource_id=personnel_id,
+        ip_address=client_ip,
+        details={"target_username": personnel.username, "activated_by": current_user["username"]}
+    )
+    await db.commit()
+
+    return {"status": "SUCCESS", "message": f"Personnel {personnel.username} reactivated (is_active=True)."}
 
 
 @app.delete("/personnel/{personnel_id}")

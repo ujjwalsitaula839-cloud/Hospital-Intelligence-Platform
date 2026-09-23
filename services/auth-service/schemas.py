@@ -1,6 +1,5 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import Optional
-from datetime import datetime
 
 
 VALID_ROLES = {'DOCTOR', 'NURSE', 'CLEANING_CREW', 'PHARMACY', 'ADMIN'}
@@ -79,6 +78,12 @@ class ForceResetRequest(BaseModel):
     def validate_strength(cls, v: str) -> str:
         return _validate_password_strength(v)
 
+    @model_validator(mode="after")
+    def validate_passwords_match(self):
+        if self.new_password != self.confirm_password:
+            raise ValueError("Passwords do not match.")
+        return self
+
 
 class ChangePasswordRequest(BaseModel):
     """Self-service password change for fully authenticated users."""
@@ -90,6 +95,12 @@ class ChangePasswordRequest(BaseModel):
     @classmethod
     def validate_strength(cls, v: str) -> str:
         return _validate_password_strength(v)
+
+    @model_validator(mode="after")
+    def validate_passwords_match(self):
+        if self.new_password != self.confirm_password:
+            raise ValueError("Passwords do not match.")
+        return self
 
 
 # ---------------------------------------------------------------------------
