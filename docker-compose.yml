@@ -47,6 +47,14 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - REDIS_URL=${REDIS_URL:-redis://hip-redis:6379}
       - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      - SMTP_HOST=${SMTP_HOST:-mailpit}
+      - SMTP_PORT=${SMTP_PORT:-1025}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL:-noreply@hospital.org}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
     networks:
       - hip-network
     depends_on:
@@ -120,5 +128,15 @@ services:
     command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
+    networks:
+      - hip-network
+
+  # --- EMAIL TESTING INBOX (MAILPIT) ---
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: hip-mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
     networks:
       - hip-network

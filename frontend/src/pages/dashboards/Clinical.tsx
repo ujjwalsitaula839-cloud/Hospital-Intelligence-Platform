@@ -76,6 +76,8 @@ export default function Clinical(): React.ReactElement {
   const [dischargeBed, setDischargeBed] = useState<Bed | null>(null);
   const [isDischarging, setIsDischarging] = useState(false);
   const [dischargeError, setDischargeError] = useState<string | null>(null);
+  const [isConfirmingArrival, setIsConfirmingArrival] = useState<Record<string, boolean>>({});
+  const [isCancellingHold, setIsCancellingHold] = useState<Record<string, boolean>>({});
 
   // Admission Drawer Form State
   const [admitSearchQuery, setAdmitSearchQuery] = useState('');
@@ -330,9 +332,19 @@ interface LiveEventNotification {
 
     connect();
 
+    const handleTokenRefreshed = () => {
+      if (isUnmounted) return;
+      reconnectAttempts = 0;
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        connect();
+      }
+    };
+    window.addEventListener('hip:token-refreshed', handleTokenRefreshed);
+
     return () => {
       isUnmounted = true;
       if (timeoutId) clearTimeout(timeoutId);
+      window.removeEventListener('hip:token-refreshed', handleTokenRefreshed);
       if (ws) {
         ws.onclose = null;
         ws.onerror = null;
@@ -475,17 +487,33 @@ interface LiveEventNotification {
 
   // Confirm Patient Arrival for RESERVED bed
   const handleConfirmArrival = async (bedCode: string) => {
+    if (isConfirmingArrival[bedCode]) return;
+    setIsConfirmingArrival((prev) => ({ ...prev, [bedCode]: true }));
     try {
       await api.updateBedStatus(bedCode, 'OCCUPIED');
       await fetchBeds();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to confirm arrival.';
-      alert(msg);
+      // If the bed is already occupied (e.g., concurrent transition or race condition),
+      // smoothly re-fetch beds instead of showing a blocking alert
+      if (msg.includes('OCCUPIED') || msg.includes('409')) {
+        await fetchBeds();
+      } else {
+        alert(msg);
+      }
+    } finally {
+      setIsConfirmingArrival((prev) => {
+        const next = { ...prev };
+        delete next[bedCode];
+        return next;
+      });
     }
   };
 
   // Cancel Hold / Reservation for RESERVED bed
   const handleCancelReservation = async (bed: Bed) => {
+    if (isCancellingHold[bed.bed_code]) return;
+    setIsCancellingHold((prev) => ({ ...prev, [bed.bed_code]: true }));
     try {
       if (bed.admission_id) {
         await api.dischargeAdmission(bed.admission_id);
@@ -496,6 +524,12 @@ interface LiveEventNotification {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to cancel hold.';
       alert(msg);
+    } finally {
+      setIsCancellingHold((prev) => {
+        const next = { ...prev };
+        delete next[bed.bed_code];
+        return next;
+      });
     }
   };
 
@@ -1268,16 +1302,24 @@ interface LiveEventNotification {
                             <button
                               type="button"
                               onClick={() => handleConfirmArrival(bed.bed_code)}
-                              className="w-full bg-yellow-500 hover:bg-yellow-400 text-zinc-950 font-bold py-1.5 text-xs font-mono uppercase tracking-wider transition-colors shadow-sm"
+                              disabled={Boolean(isConfirmingArrival[bed.bed_code])}
+                              className={`w-full font-bold py-1.5 text-xs font-mono uppercase tracking-wider transition-colors shadow-sm ${
+                                isConfirmingArrival[bed.bed_code]
+                                  ? 'bg-yellow-500/50 text-zinc-600 cursor-not-allowed'
+                                  : 'bg-yellow-500 hover:bg-yellow-400 text-zinc-950'
+                              }`}
                             >
-                              ✓ Bed Patient (Occupy)
+                              {isConfirmingArrival[bed.bed_code] ? 'Confirming...' : '✓ Bed Patient (Occupy)'}
                             </button>
                             <button
                               type="button"
                               onClick={() => handleCancelReservation(bed)}
-                              className="w-full border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-white py-1 text-[11px] font-mono uppercase tracking-wider transition-colors"
+                              disabled={Boolean(isCancellingHold[bed.bed_code])}
+                              className={`w-full border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-white py-1 text-[11px] font-mono uppercase tracking-wider transition-colors ${
+                                isCancellingHold[bed.bed_code] ? 'opacity-50 cursor-not-allowed' : ''
+                              }`}
                             >
-                              Cancel Hold
+                              {isCancellingHold[bed.bed_code] ? 'Cancelling...' : 'Cancel Hold'}
                             </button>
                           </div>
                         )}

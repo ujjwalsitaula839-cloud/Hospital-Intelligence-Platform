@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import type { Role } from '../types';
 
@@ -223,13 +223,21 @@ export default function Login(): React.ReactElement {
               <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300">
                 Password
               </label>
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="text-[10px] font-mono text-zinc-400 hover:text-zinc-200 uppercase tracking-wider"
-              >
-                {showPassword ? 'Hide ✕' : 'Show 👁'}
-              </button>
+              <div className="flex items-center gap-3">
+                <Link
+                  to="/forgot-password"
+                  className="text-[10px] font-mono text-sky-400 hover:text-sky-300 uppercase tracking-wider transition-colors"
+                >
+                  Forgot Password?
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="text-[10px] font-mono text-zinc-400 hover:text-zinc-200 uppercase tracking-wider"
+                >
+                  {showPassword ? 'Hide ✕' : 'Show 👁'}
+                </button>
+              </div>
             </div>
             <div className="relative">
               <input

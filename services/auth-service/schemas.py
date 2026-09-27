@@ -145,3 +145,33 @@ class TokenResponse(BaseModel):
     role: str
     department: str
     must_change_password: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Self-Service Password Reset
+# ---------------------------------------------------------------------------
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8, max_length=100)
+    confirm_password: Optional[str] = None
+
+    @field_validator('new_password')
+    @classmethod
+    def validate_strength(cls, v: str) -> str:
+        return _validate_password_strength(v)
+
+    @model_validator(mode="after")
+    def validate_passwords_match(self):
+        if self.confirm_password is not None and self.new_password != self.confirm_password:
+            raise ValueError("Passwords do not match.")
+        return self
+
+
+class MessageResponse(BaseModel):
+    message: str
+    status: Optional[str] = "SUCCESS"

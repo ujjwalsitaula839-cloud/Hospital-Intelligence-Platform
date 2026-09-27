@@ -9,6 +9,10 @@ export default defineConfig({
     port:3000,
     host:true,
     proxy:{
+      '/api':{
+        target:Backend_URL,
+        changeOrigin:true,
+      },
       '/auth':{
         target:Backend_URL,
         changeOrigin:true,

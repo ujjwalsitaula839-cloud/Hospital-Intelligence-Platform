@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from database import get_db, init_db
 import models
+from audit import log_audit
 from redis_client import get_redis, lifespan as redis_lifespan
 from security import UserRole, require_roles, require_roles_or_internal
 
@@ -320,6 +321,15 @@ async def create_bed(
         "department": new_bed.department,
         "status": new_bed.status
     }, actor=str(current_user["user_id"]))
+    await log_audit(
+        db=db,
+        action="CREATE_BED",
+        user_id=current_user.get("user_id"),
+        resource_type="bed",
+        resource_id=new_bed.bed_id,
+        details={"bed_code": new_bed.bed_code, "department": new_bed.department}
+    )
+    return new_bed
 
 async def _create_or_update_cleaning_task(
     db: AsyncSession,
@@ -456,6 +466,15 @@ async def admin_update_bed_status(
         "version": new_version,
         "message": f"Bed {bed_code} status updated to {target_status} by Admin."
     }, actor=current_user.get("full_name") or current_user.get("username") or "Administrator")
+
+    await log_audit(
+        db=db,
+        action="UPDATE_BED_STATUS",
+        user_id=current_user.get("user_id"),
+        resource_type="bed",
+        resource_id=bed.bed_id,
+        details={"bed_code": bed_code.upper(), "status": target_status}
+    )
 
     return {
         "status": "SUCCESS",
@@ -638,6 +657,16 @@ async def reserve_bed(
         "message": f"Bed {bed_code} reserved for Admission #{admission_id}."
     }, actor=current_user.get("full_name") or current_user.get("username") or f"Staff #{current_user['user_id']}")
 
+    await log_audit(
+        db=db,
+        action="RESERVE_BED",
+        user_id=current_user.get("user_id"),
+        resource_type="bed",
+        resource_id=bed.bed_id,
+        details={"bed_code": bed_code.upper(), "admission_id": admission_id},
+        admission_id=admission_id
+    )
+
     return {
         "status": "SUCCESS",
         "message": f"Bed {bed_code} successfully reserved for admission #{admission_id}.",
@@ -704,6 +733,16 @@ async def confirm_admission(
         "version": current_version + 1,
         "message": f"Patient arrival confirmed at Bed {bed_code} (OCCUPIED)."
     }, actor=current_user.get("full_name") or current_user.get("username") or f"Staff #{current_user['user_id']}")
+
+    await log_audit(
+        db=db,
+        action="OCCUPY_BED",
+        user_id=current_user.get("user_id"),
+        resource_type="bed",
+        resource_id=bed.bed_id,
+        details={"bed_code": bed_code.upper(), "admission_id": active_alloc.admission_id if active_alloc else None},
+        admission_id=active_alloc.admission_id if active_alloc else None
+    )
 
     return {"status": "SUCCESS", "message": f"Patient arrival confirmed. Bed {bed_code} is now OCCUPIED."}
 
@@ -809,6 +848,22 @@ async def transfer_patient_bed(
         "status": "OCCUPIED",
         "message": f"Patient transferred from {req.from_bed_code} to {req.to_bed_code}."
     }, actor=current_user.get("full_name") or current_user.get("username") or f"Staff #{current_user['user_id']}")
+
+    await log_audit(
+        db=db,
+        action="TRANSFER_BED",
+        user_id=personnel_id,
+        resource_type="bed",
+        resource_id=to_bed.bed_id,
+        details={
+            "from_bed": req.from_bed_code.upper(),
+            "to_bed": req.to_bed_code.upper(),
+            "admission_id": admission_id,
+            "from_allocation_id": from_alloc.allocation_id,
+            "to_allocation_id": new_to_alloc.allocation_id
+        },
+        admission_id=admission_id
+    )
 
     return {
         "status": "SUCCESS",
@@ -921,6 +976,16 @@ async def discharge_bed(
         "message": f"Bed {bed_code} discharged and queued for terminal cleaning."
     }, actor=current_user.get("full_name") or current_user.get("username") or f"Staff #{current_user['user_id']}")
 
+    await log_audit(
+        db=db,
+        action="DISCHARGE_BED",
+        user_id=current_user.get("user_id"),
+        resource_type="bed",
+        resource_id=bed.bed_id,
+        details={"bed_code": bed_code.upper(), "admission_id": discharged_admission_id},
+        admission_id=discharged_admission_id
+    )
+
     return {
         "status": "SUCCESS",
         "message": f"Patient discharged from {bed_code}. Bed transitioned to DIRTY. Cleaning task #{new_cleaning_task.cleaning_id} created."
@@ -1002,6 +1067,16 @@ async def release_admission_assets(
             "version": current_version + 1,
             "message": f"Bed {released_bed_code} discharged from admission #{admission_id}."
         }, actor=current_user.get("full_name") or current_user.get("username") or "Clinical Staff")
+
+    await log_audit(
+        db=db,
+        action="RELEASE_BED",
+        user_id=current_user.get("user_id"),
+        resource_type="bed",
+        resource_id=active_alloc.bed_id if active_alloc else None,
+        details={"admission_id": admission_id, "bed_code": released_bed_code},
+        admission_id=admission_id
+    )
 
     return {
         "status": "SUCCESS",
@@ -1123,6 +1198,15 @@ async def complete_cleaning(
         "version": task.bed.version if task.bed else None,
         "message": f"Bed {task.bed.bed_code if task.bed else ''} sanitized and is now AVAILABLE."
     }, actor=current_user.get("full_name") or current_user.get("username") or f"Housekeeping #{current_user['user_id']}")
+
+    await log_audit(
+        db=db,
+        action="CLEAN_BED",
+        user_id=current_user.get("user_id"),
+        resource_type="bed",
+        resource_id=task.bed_id,
+        details={"cleaning_id": cleaning_id, "bed_code": task.bed.bed_code if task.bed else None}
+    )
 
     return {"status": "SUCCESS", "message": f"Cleaning task #{cleaning_id} completed. Bed {task.bed.bed_code if task.bed else ''} is now AVAILABLE!"}
 

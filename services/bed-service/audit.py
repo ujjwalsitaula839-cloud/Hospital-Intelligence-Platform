@@ -26,6 +26,20 @@ class AuditLog(Base):
     status = Column(String(20), nullable=False, default="SUCCESS")
 
 
+class PatientAuditLog(Base):
+    __tablename__ = "patient_audit_log"
+
+    log_id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    action = Column(String(50), nullable=False, index=True)
+    resource_type = Column(String(50), nullable=True)
+    resource_id = Column(Integer, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    details = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="SUCCESS")
+
+
 async def log_audit(
     db: AsyncSession,
     action: str,
@@ -34,20 +48,32 @@ async def log_audit(
     resource_id: Optional[int] = None,
     ip_address: Optional[str] = None,
     details: Optional[dict] = None,
-    audit_status: str = "SUCCESS"
+    audit_status: str = "SUCCESS",
+    admission_id: Optional[int] = None
 ):
-    """Write an audit log entry to the database."""
+    """Write an audit log entry to bed_audit_log and optionally patient_audit_log."""
     try:
-        entry = AuditLog(
+        details_str = json.dumps(details) if details else None
+        db.add(AuditLog(
             user_id=user_id,
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
             ip_address=ip_address,
-            details=json.dumps(details) if details else None,
+            details=details_str,
             status=audit_status
-        )
-        db.add(entry)
-        await db.flush()
+        ))
+        if admission_id:
+            db.add(PatientAuditLog(
+                user_id=user_id,
+                action=action,
+                resource_type="admission",
+                resource_id=admission_id,
+                ip_address=ip_address,
+                details=details_str,
+                status=audit_status
+            ))
+        await db.commit()
     except Exception as e:
         logger.error("Failed to write audit log: %s", e)
+

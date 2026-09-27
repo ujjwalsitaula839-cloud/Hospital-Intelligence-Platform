@@ -35,7 +35,55 @@ export function decodeJwt(token: string): TokenClaims {
   return JSON.parse(jsonPayload) as TokenClaims;
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+let refreshPromise: Promise<string | null> | null = null;
+
+async function doRefreshToken(): Promise<string | null> {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+  const currentRefreshToken = sessionStorage.getItem('refresh_token');
+  if (!currentRefreshToken) {
+    return null;
+  }
+
+  refreshPromise = (async () => {
+    try {
+      const response = await fetch(`${BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: currentRefreshToken }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Refresh token request failed');
+      }
+
+      const data = (await response.json()) as AuthTokens;
+      if (data.access_token) {
+        sessionStorage.setItem('token', data.access_token);
+        if (data.refresh_token) {
+          sessionStorage.setItem('refresh_token', data.refresh_token);
+        }
+        window.dispatchEvent(
+          new CustomEvent('hip:token-refreshed', { detail: { token: data.access_token } })
+        );
+        return data.access_token;
+      }
+      return null;
+    } catch {
+      sessionStorage.removeItem('token');
+      sessionStorage.removeItem('refresh_token');
+      window.dispatchEvent(new CustomEvent('hip:auth-expired'));
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
+async function request<T>(path: string, options: RequestInit = {}, isRetry = false): Promise<T> {
   const token = sessionStorage.getItem('token');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -64,7 +112,20 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
 
     if (response.status === 401) {
+      if (!isRetry && path !== '/auth/login' && path !== '/auth/refresh' && path !== '/auth/force-reset-password') {
+        const newToken = await doRefreshToken();
+        if (newToken) {
+          const retryHeaders: Record<string, string> = {
+            ...((options.headers as Record<string, string>) || {}),
+            Authorization: `Bearer ${newToken}`,
+          };
+          return request<T>(path, { ...options, headers: retryHeaders }, true);
+        }
+      }
+
       sessionStorage.removeItem('token');
+      sessionStorage.removeItem('refresh_token');
+      window.dispatchEvent(new CustomEvent('hip:auth-expired'));
       throw new Error(`401 Unauthorized: ${errorDetail}`);
     }
     if (response.status === 403) {
@@ -99,11 +160,37 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  forgotPassword: (email: string): Promise<{ message: string; status?: string }> =>
+    request<{ message: string; status?: string }>('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  resetPassword: (payload: { token: string; new_password: string; confirm_password?: string }): Promise<{ message: string; status?: string }> =>
+    request<{ message: string; status?: string }>('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+
+  refreshToken: async (refreshToken: string): Promise<AuthTokens> => {
+    const res = await fetch(`${BASE_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) {
+      throw new Error('Failed to refresh authentication token');
+    }
+    return res.json() as Promise<AuthTokens>;
+  },
+
   logout: async (): Promise<void> => {
     try {
       await request<void>('/auth/logout', { method: 'POST' });
     } finally {
       sessionStorage.removeItem('token');
+      sessionStorage.removeItem('refresh_token');
     }
   },
 
@@ -165,6 +252,12 @@ export const api = {
   dischargeAdmission: (admissionId: number): Promise<{ status: string; message: string }> =>
     request<{ status: string; message: string }>(`/patients/admissions/discharge/${admissionId}`, {
       method: 'PUT',
+    }),
+
+  assignNurse: (admissionId: number, nurseId: number): Promise<{ assignment_id: number }> =>
+    request<{ assignment_id: number }>(`/patients/admissions/${admissionId}/assign-nurse`, {
+      method: 'POST',
+      body: JSON.stringify({ nurse_id: nurseId }),
     }),
 
   getCleaningTasks: async (status?: CleaningTaskStatus): Promise<CleaningTask[]> => {
