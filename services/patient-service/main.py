@@ -332,6 +332,14 @@ async def register_patient(
     db.add(new_patient)
     await db.commit()
     await db.refresh(new_patient)
+    await log_audit(
+        db=db,
+        action="REGISTER_PATIENT",
+        user_id=current_user.get("user_id"),
+        resource_type="patient",
+        resource_id=new_patient.patient_id,
+        details={"first_name": new_patient.first_name, "last_name": new_patient.last_name}
+    )
     return new_patient
 
 
@@ -419,6 +427,25 @@ async def create_admission(
             detail="Conflict: Patient already has an active admission."
         )
     await db.refresh(new_admission)
+
+    nurse_id = current_user.get("user_id")
+    if current_user.get("role") == "NURSE" and nurse_id:
+        assignment = models.PatientNurseAssignment(
+            admission_id=new_admission.admission_id,
+            nurse_id=nurse_id,
+            status="ACTIVE"
+        )
+        db.add(assignment)
+        await db.commit()
+
+    await log_audit(
+        db=db,
+        action="CREATE_ADMISSION",
+        user_id=nurse_id,
+        resource_type="admission",
+        resource_id=new_admission.admission_id,
+        details={"patient_id": new_admission.patient_id, "acuity": new_admission.acuity_level}
+    )
     return new_admission
 
 
@@ -550,6 +577,15 @@ async def discharge_admission(
     except Exception as e:
         logger.warning("Could not reach bed-service to release assets for admission #%s: %s", admission_id, e)
 
+    await log_audit(
+        db=db,
+        action="DISCHARGE_PATIENT",
+        user_id=current_user.get("user_id"),
+        resource_type="admission",
+        resource_id=admission_id,
+        details={"bed_release": bed_release_status}
+    )
+
     return {
         "status": "SUCCESS",
         "message": f"Admission #{admission_id} successfully discharged.",
@@ -589,6 +625,14 @@ async def assign_nurse_to_admission(
     db.add(new_assignment)
     await db.commit()
     await db.refresh(new_assignment)
+    await log_audit(
+        db=db,
+        action="ASSIGN_NURSE",
+        user_id=current_user.get("user_id"),
+        resource_type="patient_nurse_assignment",
+        resource_id=new_assignment.assignment_id,
+        details={"admission_id": admission_id, "nurse_id": assignment_in.nurse_id}
+    )
     return new_assignment
 
 
@@ -606,6 +650,14 @@ async def complete_nurse_assignment(
     assignment.status = "COMPLETED"
     assignment.end_datetime = func.now()
     await db.commit()
+    await log_audit(
+        db=db,
+        action="COMPLETE_NURSE_ASSIGNMENT",
+        user_id=current_user.get("user_id"),
+        resource_type="patient_nurse_assignment",
+        resource_id=assignment_id,
+        details={"admission_id": assignment.admission_id, "nurse_id": assignment.nurse_id}
+    )
     return {"status": "SUCCESS", "message": f"Nurse assignment #{assignment_id} completed."}
 
 

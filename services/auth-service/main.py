@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -7,7 +8,7 @@ import os
 import secrets
 from typing import Dict, Any, List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 import jwt
@@ -20,8 +21,11 @@ import models
 import schemas
 import security
 from security import UserRole, require_roles, get_current_user
+from core.config import settings
+from email_utils import send_password_reset_email
 
 logger = logging.getLogger("hip.auth")
+
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
@@ -151,6 +155,27 @@ async def prune_password_history(db: AsyncSession, personnel_id: int) -> None:
         """),
         {"pid": personnel_id, "keep": PASSWORD_HISTORY_DEPTH}
     )
+
+
+async def validate_password_not_reused(db: AsyncSession, personnel: models.Personnel, new_password: str) -> None:
+    """DRY validation: ensure new password does not match current password or historical passwords."""
+    if await run_in_threadpool(security.verify_password, new_password, personnel.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot reuse any of your last {PASSWORD_HISTORY_DEPTH} passwords."
+        )
+    if await check_password_history(db, personnel.personnel_id, new_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot reuse any of your last {PASSWORD_HISTORY_DEPTH} passwords."
+        )
+
+
+async def record_password_change(db: AsyncSession, personnel_id: int, new_password_hash: str) -> None:
+    """DRY helper: store new password in history and prune older entries beyond retention depth."""
+    db.add(models.PasswordHistory(personnel_id=personnel_id, password_hash=new_password_hash))
+    await db.flush()
+    await prune_password_history(db, personnel_id)
 
 
 async def revoke_all_user_tokens(db: AsyncSession, personnel_id: int) -> None:
@@ -450,24 +475,14 @@ async def force_reset_password(
                 detail="Password reset not required. Use /change-password instead."
             )
 
-        # Check password history (bcrypt in threadpool)
-        is_reused = await check_password_history(db, user_id, body.new_password)
-        if is_reused:
-            await increment_rate_limit(redis, rate_key, PASSWORD_CHANGE_RATE_WINDOW)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot reuse any of your last {PASSWORD_HISTORY_DEPTH} passwords."
-            )
+        # Validate reuse & record change using DRY helpers
+        await validate_password_not_reused(db, personnel, body.new_password)
 
-        # Hash and persist new password
         new_hash = await run_in_threadpool(security.hashed_password, body.new_password)
         personnel.hashed_password = new_hash
         personnel.must_change_password = False
 
-        # Record in password history and prune
-        db.add(models.PasswordHistory(personnel_id=user_id, password_hash=new_hash))
-        await db.flush()
-        await prune_password_history(db, user_id)
+        await record_password_change(db, user_id, new_hash)
 
         # Revoke all old tokens
         await revoke_all_user_tokens(db, user_id)
@@ -550,23 +565,13 @@ async def change_password(
             await db.commit()
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect.")
 
-        # Check password history
-        is_reused = await check_password_history(db, user_id, body.new_password)
-        if is_reused:
-            await increment_rate_limit(redis, rate_key, PASSWORD_CHANGE_RATE_WINDOW)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot reuse any of your last {PASSWORD_HISTORY_DEPTH} passwords."
-            )
+        # Check password reuse via DRY helper
+        await validate_password_not_reused(db, personnel, body.new_password)
 
-        # Update password
+        # Update password and persist to history
         new_hash = await run_in_threadpool(security.hashed_password, body.new_password)
         personnel.hashed_password = new_hash
-
-        # Record in history and prune
-        db.add(models.PasswordHistory(personnel_id=user_id, password_hash=new_hash))
-        await db.flush()
-        await prune_password_history(db, user_id)
+        await record_password_change(db, user_id, new_hash)
 
         # Revoke all tokens — user must re-authenticate with new password
         await revoke_all_user_tokens(db, user_id)
@@ -583,6 +588,131 @@ async def change_password(
         return {"status": "SUCCESS", "message": "Password changed successfully. All sessions revoked — please log in again."}
     finally:
         await redis.aclose()
+
+
+# ===========================================================================
+# FORGOT PASSWORD & PASSWORD RESET — Public self-service with anti-enumeration
+# ===========================================================================
+
+@app.post("/forgot-password", response_model=schemas.MessageResponse)
+@app.post("/api/v1/auth/forgot-password", response_model=schemas.MessageResponse)
+async def forgot_password(
+    body: schemas.ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Self-service password reset dispatch.
+    Implements strict anti-user enumeration: returns identical HTTP 200 for existing and
+    non-existing accounts, while equalizing execution time to defeat timing attacks.
+    """
+    normalized_email = body.email.strip().lower()
+
+    # Query personnel by email
+    result = await db.execute(
+        select(models.Personnel).where(
+            func.lower(models.Personnel.email) == normalized_email
+        )
+    )
+    user = result.scalars().first()
+
+    if user and user.is_active:
+        # Cryptographically secure random token (32 bytes urlsafe -> ~43 chars)
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+
+        # Update reset token and 15-minute expiration
+        user.reset_token_hash = token_hash
+        user.reset_token_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+        await db.commit()
+
+        # Dispatch reset email non-blockingly via background task to Mailpit / SMTP
+        background_tasks.add_task(send_password_reset_email, user.email, raw_token)
+
+        client_ip = get_client_ip(request)
+        await log_audit(
+            db, "FORGOT_PASSWORD_REQUESTED", user_id=user.personnel_id,
+            resource_type="PERSONNEL", resource_id=user.personnel_id,
+            ip_address=client_ip,
+            details={"email": user.email}
+        )
+        await db.commit()
+    else:
+        # TIMING ATTACK MITIGATION:
+        # Perform dummy token generation and SHA-256 hash plus equalizing latency
+        dummy_token = secrets.token_urlsafe(32)
+        _ = hashlib.sha256(dummy_token.encode()).hexdigest()
+        await asyncio.sleep(0.04)  # ~40ms to match database commit roundtrip
+
+    # Anti-user enumeration: uniform generic response
+    return schemas.MessageResponse(
+        message="If an account with that email exists, a password reset link has been dispatched.",
+        status="SUCCESS"
+    )
+
+
+@app.post("/reset-password", response_model=schemas.MessageResponse)
+@app.post("/api/v1/auth/reset-password", response_model=schemas.MessageResponse)
+async def reset_password(
+    body: schemas.ResetPasswordRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Execute password reset with single-use token verification, 5-password history
+    enforcement, active session invalidation, and HIPAA-compliant audit logging.
+    """
+    token_hash = hashlib.sha256(body.token.strip().encode()).hexdigest()
+
+    result = await db.execute(
+        select(models.Personnel).where(
+            models.Personnel.reset_token_hash == token_hash,
+            models.Personnel.is_active.is_(True)
+        )
+    )
+    user = result.scalars().first()
+
+    now_utc = datetime.now(timezone.utc)
+    if not user or not user.reset_token_expires_at or now_utc > user.reset_token_expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+
+    # 1. Enforce password history & reuse policy via DRY helper
+    await validate_password_not_reused(db, user, body.new_password)
+
+    # 2. Hash new password with bcrypt
+    new_hash = await run_in_threadpool(security.hashed_password, body.new_password)
+    user.hashed_password = new_hash
+
+    # 3. Clear reset token & mandatory change flag
+    user.reset_token_hash = None
+    user.reset_token_expires_at = None
+    user.must_change_password = False
+
+    # 4. Invalidate existing active sessions / JWTs (increment token_version and revoke tokens)
+    user.token_version = (user.token_version or 0) + 1
+    await revoke_all_user_tokens(db, user.personnel_id)
+
+    # 5. Record new password in history and prune older entries
+    await record_password_change(db, user.personnel_id, new_hash)
+
+    # 7. Write audit log
+    client_ip = get_client_ip(request)
+    await log_audit(
+        db, "PASSWORD_RESET_SUCCESS", user_id=user.personnel_id,
+        resource_type="PERSONNEL", resource_id=user.personnel_id,
+        ip_address=client_ip,
+        details={"username": user.username, "email": user.email}
+    )
+    await db.commit()
+
+    return schemas.MessageResponse(
+        message="Password reset successful.",
+        status="SUCCESS"
+    )
 
 
 # ===========================================================================

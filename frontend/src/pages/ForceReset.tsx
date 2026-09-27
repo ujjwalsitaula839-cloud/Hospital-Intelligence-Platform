@@ -43,6 +43,9 @@ export default function ForceReset(): React.ReactElement {
       });
 
       sessionStorage.setItem('token', data.access_token);
+      if (data.refresh_token) {
+        sessionStorage.setItem('refresh_token', data.refresh_token);
+      }
       const updatedClaims = refreshAuth();
 
       const targetRole = updatedClaims?.role || data.role;

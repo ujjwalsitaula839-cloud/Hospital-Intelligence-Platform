@@ -5,8 +5,10 @@ import Admin from './pages/dashboards/Admin';
 import Clinical from './pages/dashboards/Clinical';
 import Housekeeping from './pages/dashboards/Housekeeping';
 import ForceReset from './pages/ForceReset';
+import ForgotPassword from './pages/ForgotPassword';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
+import ResetPassword from './pages/ResetPassword';
 import type { Role } from './types';
 
 function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode; allowedRoles?: Role[] }) {
@@ -26,6 +28,8 @@ export default function App(): React.ReactElement {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/force-reset" element={<ForceReset />} />
           <Route
             path="/dashboard/admin"

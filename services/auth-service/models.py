@@ -18,6 +18,9 @@ class Personnel(Base):
     create_datetime = Column(DateTime(timezone=True), server_default=func.now())
     last_login_datetime = Column(DateTime(timezone=True), nullable=True)
     last_logout_datetime = Column(DateTime(timezone=True), nullable=True)
+    reset_token_hash = Column(String(255), nullable=True, index=True)
+    reset_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+    token_version = Column(Integer, default=1, nullable=False, server_default="1")
 
 
 class PasswordHistory(Base):
@@ -53,3 +56,7 @@ class AuditLog(Base):
     ip_address = Column(String(45), nullable=True)
     details = Column(Text, nullable=True)  # JSON string with additional context
     status = Column(String(20), nullable=False, default="SUCCESS")  # SUCCESS, FAILURE
+
+
+# Alias User to Personnel for architectural compatibility
+User = Personnel

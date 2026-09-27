@@ -69,9 +69,19 @@ export default function Housekeeping(): React.ReactElement {
 
     connect();
 
+    const handleTokenRefreshed = () => {
+      if (isUnmounted) return;
+      reconnectAttempts = 0;
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        connect();
+      }
+    };
+    window.addEventListener('hip:token-refreshed', handleTokenRefreshed);
+
     return () => {
       isUnmounted = true;
       if (timeoutId) clearTimeout(timeoutId);
+      window.removeEventListener('hip:token-refreshed', handleTokenRefreshed);
       if (ws) {
         ws.onclose = null;
         ws.onerror = null;

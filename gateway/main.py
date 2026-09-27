@@ -174,6 +174,10 @@ ALLOWED_RESET_ROUTES = {
     ("POST", "/auth/force-reset-password"),
     ("POST", "/auth/logout"),
     ("GET", "/auth/me"),
+    ("POST", "/auth/forgot-password"),
+    ("POST", "/auth/reset-password"),
+    ("POST", "/api/v1/auth/forgot-password"),
+    ("POST", "/api/v1/auth/reset-password"),
 }
 
 
@@ -498,3 +502,9 @@ for service_name, config in SERVICES_CONFIG.items():
             tags=[service_name.capitalize()],
             responses={200: {"content": {"application/json": {}}}}
         )(register_proxy_endpoint(service_name, method))
+        route_decorator(
+            f"/api/v1/{service_name}/{{path:path}}",
+            summary=f"API v1 {service_name.capitalize()} -> {method.upper()}",
+            tags=[f"API v1 {service_name.capitalize()}"],
+            responses={200: {"content": {"application/json": {}}}}
+        )(register_proxy_endpoint(service_name, method))

@@ -48,6 +48,6 @@ async def log_audit(
             status=audit_status
         )
         db.add(entry)
-        await db.flush()
+        await db.commit()
     except Exception as e:
         logger.error("Failed to write audit log: %s", e)
