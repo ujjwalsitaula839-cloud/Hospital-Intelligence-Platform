@@ -29,3 +29,7 @@ redis_data/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Isolated frontend presentation publishing workspace
+.demo-publish/
+hip-demo.tar.gz

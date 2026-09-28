@@ -1,122 +1,58 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
+import { useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { Activity, ArrowRight, Bell, BedDouble, Check, ChevronRight, ClipboardList, Clock3, HeartPulse, LayoutDashboard, LogOut, Plus, Radio, RotateCcw, Search, ShieldCheck, Truck, Users, Wifi, WifiOff, X } from 'lucide-react'
 import './App.css'
 
-function App() {
-  const [count, setCount] = useState(0)
-
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+type Role = 'Charge Nurse' | 'Nurse' | 'EMS' | 'Doctor'
+type Patient = { id: string; name: string; age: string; complaint: string; acuity: string; eta: number; status: string; bed: string; nurse: string; acknowledged: boolean; tasks: { title: string; done: boolean }[]; history: string[] }
+const roles: Role[] = ['Charge Nurse', 'Nurse', 'EMS', 'Doctor']
+const accounts: Record<Role, string> = { 'Charge Nurse': 'Sarah Mitchell', Nurse: 'Alex Rivera', EMS: 'Jordan Lee', Doctor: 'Dr. Maya Chen' }
+const initial: Patient[] = [
+  { id: 'HIP-2041', name: 'Robert Ellis', age: '67 · Male', complaint: 'Chest pain · onset 35 minutes ago', acuity: 'Critical', eta: 4, status: 'En route', bed: '', nurse: '', acknowledged: false, tasks: [{ title: 'Prepare cardiac monitor', done: false }, { title: 'Confirm room readiness', done: false }], history: ['Metro EMS submitted pre-arrival report', 'Reported BP 148/92 mmHg · HR 112 bpm · SpO₂ 95%'] },
+  { id: 'HIP-2040', name: 'Mia Thompson', age: '28 · Female', complaint: 'Motor vehicle collision · left arm injury', acuity: 'Urgent', eta: 12, status: 'En route', bed: 'ER-04', nurse: 'Alex Rivera', acknowledged: true, tasks: [{ title: 'Prepare monitoring equipment', done: true }, { title: 'Confirm room readiness', done: false }], history: ['Metro EMS submitted pre-arrival report', 'Sarah Mitchell acknowledged report', 'Alex Rivera assigned · ER-04 reserved'] },
+  { id: 'HIP-2039', name: 'James Wilson', age: '54 · Male', complaint: 'Shortness of breath', acuity: 'Urgent', eta: 0, status: 'Arrived', bed: 'ER-02', nurse: 'Alex Rivera', acknowledged: true, tasks: [{ title: 'Prepare monitoring equipment', done: true }, { title: 'Confirm room readiness', done: true }], history: ['Patient arrived at ER', 'Receiving handoff awaiting confirmation'] },
+  { id: 'HIP-2038', name: 'Elena Garcia', age: '42 · Female', complaint: 'Abdominal pain', acuity: 'Routine', eta: 0, status: 'In care', bed: 'ER-06', nurse: 'Sam Patel', acknowledged: true, tasks: [{ title: 'Prepare monitoring equipment', done: true }, { title: 'Confirm room readiness', done: true }], history: ['Handoff accepted by Sarah Mitchell', 'Patient moved to ER-06'] },
+]
+const bedCodes = Array.from({ length: 12 }, (_, i) => `ER-${String(i + 1).padStart(2, '0')}`)
+const closed = (p: Patient) => ['Discharged', 'Cancelled'].includes(p.status)
+const ready = (p: Patient) => p.tasks.every(t => t.done) && !!p.bed && !!p.nurse
+function Overlay({ children, close, title, modal = false }: { children: ReactNode; close: () => void; title: string; modal?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null)
+  return <div className={modal ? 'modal-backdrop' : 'drawer-backdrop'} onClick={close}><div ref={ref} className={modal ? 'intake-modal' : 'drawer'} role="dialog" aria-modal="true" aria-label={title} onClick={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Escape') close(); if (e.key === 'Tab') { const nodes = Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)') || []); const first = nodes[0], last = nodes[nodes.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() } } }}><div className="drawer-top"><span className="eyebrow">{title}</span><button autoFocus className="icon-button" aria-label="Close dialog" onClick={close}><X/></button></div>{children}</div></div>
 }
-
-export default App
+export default function App() {
+  const [role, setRole] = useState<Role>('Charge Nurse'), [signedIn, setSignedIn] = useState(true)
+  const [patients, setPatients] = useState<Patient[]>(initial), [selected, setSelected] = useState<string | null>(null)
+  const [tab, setTab] = useState('Overview'), [filter, setFilter] = useState('All patients'), [search, setSearch] = useState('')
+  const [offline, setOffline] = useState(false), [showIntake, setShowIntake] = useState(false), [toast, setToast] = useState('')
+  const [turnover, setTurnover] = useState(['ER-09', 'ER-10']), [override, setOverride] = useState('')
+  const active = patients.filter(p => !closed(p)), incoming = active.filter(p => p.status === 'En route')
+  const scoped = role === 'Nurse' ? patients.filter(p => p.nurse === accounts.Nurse) : role === 'EMS' ? patients.filter(p => p.id !== 'HIP-2038') : patients
+  const alerts = scoped.filter(p => !closed(p) && (!p.acknowledged || p.status === 'En route' && !ready(p)))
+  const available = bedCodes.filter(b => !active.some(p => p.bed === b) && !turnover.includes(b) && b !== 'ER-12')
+  const patient = patients.find(p => p.id === selected)
+  const visible = scoped.filter(p => (filter === 'All patients' ? !closed(p) : filter === 'Incoming' ? p.status === 'En route' : filter === 'In department' ? ['Arrived', 'In care'].includes(p.status) : closed(p)) && `${p.name} ${p.id} ${p.complaint}`.toLowerCase().includes(search.toLowerCase()))
+  function update(id: string, patch: Partial<Patient>, event: string) { if (offline) { setToast('Manual mode: reconnect before updating this demo.'); return } setPatients(ps => ps.map(p => p.id === id ? { ...p, ...patch, history: [...p.history, `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${accounts[role]} · ${event}`] } : p)); setToast(event) }
+  function switchRole(value: Role) { setRole(value); setSelected(null); setTab('Overview'); setFilter('All patients'); setSearch(''); setOverride('') }
+  function reset() { setPatients(initial); setTurnover(['ER-09', 'ER-10']); setOffline(false); setSelected(null); setToast('Demo reset. Start with Robert Ellis’s incoming report.') }
+  function submitReport(form: HTMLFormElement) { if (offline) return; const d = new FormData(form), id = `HIP-${Date.now().toString().slice(-6)}`; const p: Patient = { id, name: String(d.get('name')).trim() || 'Unknown patient', age: `${d.get('age') || 'Unknown age'} · ${d.get('sex')}`, complaint: String(d.get('complaint')), acuity: String(d.get('acuity')), eta: Number(d.get('eta')), status: 'En route', bed: '', nurse: '', acknowledged: false, tasks: [{ title: String(d.get('resource') || 'Prepare monitoring equipment'), done: false }, { title: 'Confirm room readiness', done: false }], history: [`Metro EMS · ${accounts[role]} submitted report`, `Observations: ${d.get('vitals') || 'Not reported'}`, `Treatments / notes: ${d.get('notes') || 'None reported'}`] }; setPatients(ps => [p, ...ps]); setShowIntake(false); setSelected(id); setToast('Report received by hospital. Awaiting charge nurse acknowledgment.') }
+  const bedGrid = <div className="bed-grid">{bedCodes.map(b => { const occupant = active.find(p => p.bed === b), state = occupant ? occupant.status === 'En route' ? 'Reserved' : 'Occupied' : turnover.includes(b) ? 'Turnover' : b === 'ER-12' ? 'Unavailable' : 'Available'; return <button key={b} className={`bed ${state.toLowerCase()}`} onClick={() => occupant ? setSelected(occupant.id) : setToast(`${b} · ${state}${state === 'Available' ? '. Open a patient to assign this bed.' : ''}`)}><BedDouble size={20}/><strong>{b}</strong><span>{state}</span></button> })}</div>
+  if (!signedIn) return <main className="login"><div className="login-card"><div className="brand"><span className="brand-icon"><HeartPulse/></span>HIP</div><div className="eyebrow">RIVERSIDE GENERAL · DEMONSTRATION</div><h1>Your shift.<br/>One shared picture.</h1><p>Explore a connected emergency department with fictional patients and simulated workflows.</p><label>Demo account<select value={role} onChange={e => switchRole(e.target.value as Role)}>{roles.map(r => <option key={r}>{r}</option>)}</select></label><p><ShieldCheck size={16}/> {accounts[role]} · {role === 'EMS' ? 'Metro EMS' : 'Emergency Department'}</p><button className="primary wide" onClick={() => setSignedIn(true)}>Enter demo workspace <ArrowRight size={18}/></button><small>Demo access only. No real authentication or patient data.</small></div></main>
+  return <div className="app-shell"><aside className="sidebar"><div className="brand"><span className="brand-icon"><HeartPulse/></span><span>HIP<small>Hospital Intelligence</small></span></div><div className="hospital"><span className="hospital-mark">RG</span><span>Riverside General<small>Emergency Department</small></span></div><span className="nav-label">WORKSPACE</span><nav>{[{ title: 'Overview', icon: LayoutDashboard }, ...(['Charge Nurse', 'Doctor'].includes(role) ? [{ title: 'Bed board', icon: BedDouble }] : []), { title: 'Activity', icon: Activity }].map(item => <button title={item.title} className={tab === item.title ? 'nav-item selected' : 'nav-item'} key={item.title} onClick={() => setTab(item.title)}><item.icon size={19}/><span>{item.title}</span>{tab === item.title && <ChevronRight size={16}/>}</button>)}</nav><div className="sidebar-bottom"><div className="demo-note"><Radio size={17}/><strong>Demo environment</strong><p>Fictional data. Changes last until refresh or reset.</p><button onClick={reset}><RotateCcw size={14}/> Reset demo</button></div><button className="profile" title="Demo login" onClick={() => setSignedIn(false)}><span className="avatar">{accounts[role].split(' ').map(s => s[0]).slice(0, 2).join('')}</span><span>{accounts[role]}<small>{role}</small></span><LogOut size={16}/></button></div></aside>
+  <div className="workspace"><header className="topbar"><div className="breadcrumb">Workspace <ChevronRight size={14}/><strong>{tab}</strong></div><div className="top-actions"><button className={`connection ${offline ? 'offline' : ''}`} onClick={() => { setOffline(!offline); setToast(offline ? 'Reconnected. Demo state synchronized.' : 'Manual mode enabled. Coordinate by phone or verbally; record events after reconnecting.') }}>{offline ? <WifiOff size={15}/> : <Wifi size={15}/>} {offline ? 'Manual mode' : 'Simulation live'}</button><label className="role-picker"><span>View as</span><select aria-label="Demo role" value={role} onChange={e => switchRole(e.target.value as Role)}>{roles.map(r => <option key={r}>{r}</option>)}</select></label></div></header>
+  <main className="main-content">{offline && <div className="manual-banner"><WifiOff size={18}/><span><strong>Manual mode — updates paused.</strong> Use phone or verbal coordination. After reconnecting, record actual event times in patient notes.</span></div>}<div className="page-heading"><div><div className="eyebrow">EMERGENCY DEPARTMENT <span>/</span> {role.toUpperCase()}</div><h1>{tab === 'Bed board' ? 'A place for every patient.' : tab === 'Activity' ? 'The latest on your floor.' : role === 'EMS' ? 'A better handoff starts here.' : role === 'Nurse' ? 'Your patients. Your next steps.' : role === 'Doctor' ? 'Care, with the full picture.' : 'Your ER, in focus.'}</h1><p>{role === 'EMS' ? 'Keep your receiving team one step ahead of arrival.' : 'A shared view of arrivals, readiness, and the people behind every handoff.'}</p></div><button className="primary" onClick={() => setShowIntake(true)}><Plus size={18}/>{role === 'EMS' ? 'New transport' : 'Simulate arrival'}</button></div>
+  <div className="metrics">{[{ label: 'Incoming patients', value: incoming.length, note: `${incoming.filter(p => p.eta <= 5).length} arriving within 5 min`, icon: Truck, tone: 'teal' }, { label: 'Available beds', value: available.length, note: 'of 12 ER spaces', icon: BedDouble, tone: 'blue' }, { label: 'Preparation ready', value: incoming.filter(ready).length, note: `of ${incoming.length} incoming patients`, icon: ClipboardList, tone: 'green' }, { label: 'Needs attention', value: alerts.length, note: 'Unacknowledged or not ready', icon: Bell, tone: 'amber' }].filter((_, i) => !['Nurse', 'EMS'].includes(role) || i === 0 || i === 2).map(m => <div className="metric" key={m.label}><div><span>{m.label}</span><strong>{m.value}<small>{m.note}</small></strong></div><span className={`metric-icon ${m.tone}`}><m.icon size={21}/></span></div>)}</div>
+  {tab === 'Overview' && <><div className="attention"><span className="attention-icon"><Bell size={20}/></span><div><strong>{alerts.length ? `${alerts.length} incoming patient${alerts.length === 1 ? '' : 's'} need${alerts.length === 1 ? 's' : ''} preparation` : 'Your incoming patients are ready'}</strong><p>{alerts[0] ? `${alerts[0].name} · ${alerts[0].eta} min away · ${!alerts[0].acknowledged ? 'Awaiting acknowledgment' : 'Preparation incomplete'}` : 'Assignments and preparation are up to date.'}</p></div>{alerts[0] && <button onClick={() => setSelected(alerts[0].id)}>Review patient <ArrowRight size={17}/></button>}</div><div className="board-layout"><section className="panel patient-panel"><div className="panel-heading"><div><h2>{role === 'Nurse' ? 'My patients' : role === 'EMS' ? 'Transport board' : 'Patient flow'} <span className="count">{scoped.filter(p => !closed(p)).length}</span></h2><p>From first report to a prepared receiving team.</p></div><span className="live-label"><i/>Live demo</span></div><div className="board-controls"><div className="tabs">{['All patients', 'Incoming', 'In department', 'Closed'].map(f => <button className={filter === f ? 'active' : ''} key={f} onClick={() => setFilter(f)}>{f}</button>)}</div><label className="search"><Search size={16}/><input placeholder="Find patient…" value={search} onChange={e => setSearch(e.target.value)} aria-label="Find patient"/></label></div><div className="patient-table"><div className="table-header"><span>PATIENT / PRESENTING CONCERN</span><span>ARRIVAL</span><span>ASSIGNMENT</span><span>READINESS</span><span/></div>{visible.map(p => <button className="patient-row" key={p.id} onClick={() => setSelected(p.id)}><div className="patient-cell"><span className={`acuity-line ${p.acuity.toLowerCase()}`}/><div><div className="patient-name">{p.name}<span className={`badge ${p.acuity.toLowerCase()}`}>{p.acuity}</span></div><p>{p.age} <span>· {p.id}</span></p><small>{p.complaint}</small></div></div><div><strong className={p.status === 'En route' && p.eta <= 5 ? 'urgent-time' : ''}>{p.status === 'En route' ? <><Clock3 size={15}/>{p.eta} min</> : p.status}</strong><small>{p.status === 'En route' ? 'EMS en route' : closed(p) ? 'Encounter closed' : 'In department'}</small></div><div><strong>{p.bed || 'Unassigned'}</strong><small>{p.nurse || 'Nurse needed'}</small></div><div><span className={`readiness ${ready(p) ? 'complete' : ''}`}>{ready(p) ? <Check size={14}/> : <Clock3 size={14}/>} {ready(p) ? 'Ready' : `${p.tasks.filter(t => t.done).length}/${p.tasks.length} steps`}</span><small>{!p.acknowledged ? 'Not acknowledged' : p.status === 'Arrived' ? 'Handoff pending' : 'Acknowledged'}</small></div><ChevronRight size={18}/></button>)}{!visible.length && <div className="empty"><Search/><h3>No patients in this view</h3><p>Try another filter or simulate a new arrival.</p></div>}</div><div className="panel-footer"><ShieldCheck size={14}/> Fictional patient information · Demonstration only</div></section>
+  <aside className="right-column">{!['EMS', 'Nurse'].includes(role) && <section className="panel"><div className="panel-heading compact"><h2>ER spaces</h2><span>{available.length} available</span></div>{bedGrid}<div className="legend">{['Available', 'Reserved', 'Occupied', 'Turnover'].map(s => <span key={s}><i className={s.toLowerCase()}/>{s}</span>)}</div></section>}<section className="panel team-panel"><div className="panel-heading compact"><h2>{role === 'EMS' ? 'Receiving team' : 'On this shift'}</h2><Users size={17}/></div>{(role === 'EMS' ? ['Sarah Mitchell'] : ['Alex Rivera', 'Sam Patel', 'Jamie Park']).map((name, i) => <div className="team-person" key={name}><span className={`avatar avatar-${i}`}>{name.split(' ').map(n => n[0]).join('')}</span><div><strong>{name}</strong><small>{role === 'EMS' ? 'Charge Nurse' : 'Registered Nurse'}</small></div>{role !== 'EMS' && <span>{active.filter(p => p.nurse === name).length} patients</span>}</div>)}</section><section className="shift-note"><Radio size={19}/><h3>Ready before arrival</h3><p>Every report, assignment, and preparation step stays connected to the patient.</p><small>Simulated updates · This browser session</small></section></aside></div></>}
+  {tab === 'Bed board' && <section className="panel full-beds"><div className="panel-heading"><div><h2>Bed readiness</h2><p>Discharge starts turnover. The charge nurse confirms room readiness.</p></div></div>{bedGrid}{turnover.map(b => <div className="turnover-row" key={b}><span><BedDouble size={18}/> {b} · Cleaning and room preparation</span><button disabled={offline || role !== 'Charge Nurse'} onClick={() => { setTurnover(bs => bs.filter(x => x !== b)); setToast(`${b} confirmed ready by ${accounts[role]}`) }}>Confirm room ready <Check size={16}/></button></div>)}</section>}
+  {tab === 'Activity' && <section className="panel activity-page"><div className="panel-heading"><h2>Shared activity</h2><span>Current demo session</span></div>{scoped.flatMap(p => p.history.map((event, index) => <button className="activity-event" key={`${p.id}-${index}`} onClick={() => setSelected(p.id)}><span className="timeline-dot"/><div><strong>{p.name} <small>{p.id}</small></strong><p>{event}</p></div><ChevronRight size={16}/></button>)).reverse()}</section>}<footer className="page-footer"><span>HIP <span>/</span> Hospital Intelligence Platform</span><span>One team. A clearer handoff.</span></footer></main></div>
+  {patient && <Overlay title={`PATIENT WORKSPACE · ${patient.id}`} close={() => setSelected(null)}><div className="detail-title"><span className={`badge ${patient.acuity.toLowerCase()}`}>{patient.acuity} · reported</span><h2>{patient.name}</h2><p>{patient.age} · {patient.complaint}</p></div><div className="detail-summary"><div><small>JOURNEY</small><strong>{patient.status}</strong></div><div><small>{patient.status === 'En route' ? 'EXPECTED IN' : 'LOCATION'}</small><strong>{patient.status === 'En route' ? `${patient.eta} minutes` : patient.bed || 'Awaiting location'}</strong></div></div>{!patient.acknowledged && !closed(patient) && <div className="detail-callout"><Bell size={19}/><span>Hospital acknowledgment pending</span>{role === 'Charge Nurse' && <button disabled={offline} onClick={() => update(patient.id, { acknowledged: true }, 'Report acknowledged')}>Acknowledge</button>}</div>}
+  <section className="detail-section"><h3>Assignments</h3><div className="form-grid"><label>Bed / room<select disabled={offline || closed(patient) || role !== 'Charge Nurse' || patient.status !== 'En route'} value={patient.bed} onChange={e => update(patient.id, { bed: e.target.value, tasks: patient.tasks.map(t => t.title === 'Confirm room readiness' ? { ...t, done: false } : t) }, `Bed assignment: ${e.target.value || 'unassigned'}`)}><option value="">Not assigned</option>{bedCodes.filter(b => b === patient.bed || available.includes(b)).map(b => <option key={b}>{b}</option>)}</select></label><label>Receiving nurse<select disabled={offline || closed(patient) || role !== 'Charge Nurse'} value={patient.nurse} onChange={e => update(patient.id, { nurse: e.target.value }, `Nurse assignment: ${e.target.value || 'unassigned'}`)}><option value="">Not assigned</option>{['Alex Rivera', 'Sam Patel', 'Jamie Park'].map(n => <option key={n}>{n}</option>)}</select></label></div></section>
+  <section className="detail-section"><h3>Preparation <span>{patient.tasks.filter(t => t.done).length}/{patient.tasks.length}</span></h3>{patient.tasks.map((t, i) => <label className="task" key={i}><input type="checkbox" checked={t.done} disabled={offline || closed(patient) || role === 'EMS' || t.title === 'Confirm room readiness' && (role !== 'Charge Nurse' || !patient.bed)} onChange={() => update(patient.id, { tasks: patient.tasks.map((task, n) => n === i ? { ...task, done: !task.done } : task) }, `${t.title} ${t.done ? 'reopened' : 'completed'}`)}/><span>{t.title}<small>{t.title === 'Confirm room readiness' ? 'Charge Nurse' : patient.nurse || 'Awaiting owner'}</small></span></label>)}{['Doctor', 'Charge Nurse'].includes(role) && !closed(patient) && <form className="inline-form" onSubmit={e => { e.preventDefault(); const form = e.currentTarget, value = String(new FormData(form).get('task')).trim(); if (value && !offline) { update(patient.id, { tasks: [...patient.tasks, { title: value, done: false }] }, `Resource task assigned: ${value}`); form.reset() } }}><input name="task" aria-label="New resource task" placeholder="Add equipment or resource task" required/><button disabled={offline} aria-label="Add resource task"><Plus size={18}/></button></form>}</section>
+  {role === 'EMS' && patient.status === 'En route' && <section className="detail-section"><h3>Transport update</h3><form className="inline-form" onSubmit={e => { e.preventDefault(); update(patient.id, { eta: Number(new FormData(e.currentTarget).get('eta')) }, 'ETA updated') }}><input aria-label="ETA in minutes" name="eta" type="number" min="0" max="240" defaultValue={patient.eta} required/><button disabled={offline}>Update ETA</button></form></section>}
+  {role === 'Doctor' && !closed(patient) && <section className="detail-section"><h3>Documented override</h3><p>Reopen preparation for a clinical reassessment.</p><input aria-label="Override reason" placeholder="Reason required" value={override} onChange={e => setOverride(e.target.value)}/><button className="secondary wide" disabled={!override.trim() || offline} onClick={() => { update(patient.id, { tasks: [...patient.tasks, { title: `Clinical reassessment: ${override}`, done: false }] }, `Doctor override: ${override}`); setOverride('') }}>Record override</button></section>}
+  <section className="detail-section"><h3>Activity & handoff</h3>{patient.history.map((h, i) => <div className="history" key={i}><span className="timeline-dot"/><p>{h}</p></div>)}<form className="inline-form" onSubmit={e => { e.preventDefault(); const form = e.currentTarget, note = String(new FormData(form).get('note')).trim(); if (note && !offline) { update(patient.id, {}, `Note / manual event: ${note}`); form.reset() } }}><input name="note" aria-label="Activity note" placeholder="Note, blocker, or manual event time" required/><button disabled={offline} aria-label="Add activity note"><Plus size={18}/></button></form></section>
+  <div className="drawer-actions">{role === 'Charge Nurse' && !closed(patient) && <button className="primary wide" disabled={offline} onClick={() => { const next = patient.status === 'En route' ? 'Arrived' : patient.status === 'Arrived' ? 'In care' : 'Discharged'; if (next === 'Discharged' && patient.bed) setTurnover(bs => [...new Set([...bs, patient.bed])]); update(patient.id, { status: next, ...(next === 'Arrived' ? { eta: 0 } : {}) }, next === 'In care' ? 'Handoff accepted · care started' : `Patient ${next.toLowerCase()}`) }}>{patient.status === 'En route' ? 'Confirm patient arrival' : patient.status === 'Arrived' ? 'Accept handoff & start care' : 'Discharge & start room turnover'}<ArrowRight size={17}/></button>}{['EMS', 'Charge Nurse'].includes(role) && patient.status === 'En route' && <button className="text-button" disabled={offline} onClick={() => { const reason = window.prompt('Reason for cancellation or rerouting:'); if (reason?.trim()) update(patient.id, { status: 'Cancelled' }, `Arrival cancelled: ${reason}`) }}>Cancel / reroute arrival</button>}</div></Overlay>}
+  {showIntake && <Overlay modal title="METRO EMS · FICTIONAL REPORT" close={() => setShowIntake(false)}><h2>Prepare them before you arrive.</h2><p>Send what you know. Unknown demographics can be updated later.</p><form onSubmit={e => { e.preventDefault(); submitReport(e.currentTarget) }}><div className="form-grid"><label>Patient name<input name="name" placeholder="Unknown patient" maxLength={80}/></label><label>ETA · minutes<input required name="eta" type="number" min="0" max="240" defaultValue="8"/></label><label>Age<input name="age" type="number" min="0" max="120" placeholder="Unknown"/></label><label>Sex<select name="sex"><option>Unknown</option><option>Female</option><option>Male</option><option>Other</option></select></label></div><label>Presenting concern<input required name="complaint" placeholder="e.g. Fall with right hip pain" maxLength={200}/></label><div className="form-grid"><label>Reported acuity<select name="acuity"><option>Unknown</option><option>Routine</option><option>Urgent</option><option>Critical</option></select></label><label>Equipment / resource need<input name="resource" placeholder="e.g. Mobility assistance"/></label></div><label>Vital signs · include units and time<input name="vitals" placeholder="BP, heart rate, oxygen saturation…"/></label><label>Treatments, notes, and alerts<textarea name="notes" placeholder="Treatments administered or additional context" rows={3}/></label><small>Demo labels only · No automated clinical triage</small><button className="primary wide" type="submit" disabled={offline}><Radio size={18}/>Send pre-arrival report</button></form></Overlay>}
+  {toast && <div className="toast" role="status"><Check size={18}/><span>{toast}</span><button aria-label="Dismiss notification" onClick={() => setToast('')}><X size={16}/></button></div>}</div>
+}

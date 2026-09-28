@@ -9,6 +9,15 @@ volumes:
     driver: local
 
 services:
+  # Explicit migration command only; never runs during normal app startup.
+  db-migrate:
+    profiles: ["migrations"]
+    build: ./database
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+    networks:
+      - hip-network
+
   # --- EDGE ROUTING LAYER ---
   gateway:
     build:
