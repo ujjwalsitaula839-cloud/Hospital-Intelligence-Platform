@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import Optional
+from datetime import datetime
 
 
 VALID_ROLES = {'DOCTOR', 'NURSE', 'CLEANING_CREW', 'PHARMACY', 'ADMIN'}
@@ -108,7 +109,7 @@ class ChangePasswordRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(..., min_length=1, max_length=255)
     password: str
 
 
@@ -129,9 +130,23 @@ class PersonnelResponse(BaseModel):
     department: str
     is_active: bool
     must_change_password: bool
+    deactivation_reason: Optional[str] = None
+    deactivation_notes: Optional[str] = None
+    deactivated_at: Optional[datetime] = None
+    deactivated_by: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class DeactivatePersonnelRequest(BaseModel):
+    reason: Optional[str] = "Administrative Decision"
+    notes: Optional[str] = None
+
+
+class UpdatePersonnelNotesRequest(BaseModel):
+    reason: Optional[str] = None
+    notes: Optional[str] = None
 
 
 class TokenResponse(BaseModel):
@@ -174,4 +189,4 @@ class ResetPasswordRequest(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
-    status: Optional[str] = "SUCCESS"
+    status: Optional[str] = "SUCCESS"

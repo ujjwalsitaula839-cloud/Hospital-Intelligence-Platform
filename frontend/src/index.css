@@ -5,3 +5,54 @@
   --font-display: "Playfair Display", Georgia, serif;
   --font-body: Inter, system-ui, -apple-system, sans-serif;
 }
+
+/* ============================================================
+   GLOBAL HIGH-CONTRAST BUTTON FIX:
+   Unlayered CSS to override unlayered `button { color: inherit }`
+   and guarantee crisp, readable white text on all dark/blue buttons.
+   ============================================================ */
+button.text-white,
+button[class*="text-white"],
+button[class*="bg-[#1b2c49]"],
+button[class*="bg-[#0f1b31]"],
+button[class*="bg-blue-600"],
+button[class*="bg-blue-700"],
+button[class*="bg-blue-800"],
+button[class*="bg-blue-900"],
+button[class*="bg-slate-900"],
+button[class*="bg-slate-800"],
+button[class*="bg-zinc-800"],
+button[class*="bg-zinc-900"],
+button[class*="bg-rose-600"],
+button[class*="bg-rose-700"],
+button[class*="bg-emerald-600"],
+button[class*="bg-emerald-700"],
+button[class*="bg-indigo-600"],
+button[class*="bg-indigo-700"],
+.btn-primary,
+.bg-\[\#1b2c49\] {
+  color: #ffffff !important;
+}
+
+button.text-rose-700,
+button[class*="text-rose-700"] {
+  color: #be123c !important;
+}
+
+button.text-emerald-700,
+button[class*="text-emerald-700"] {
+  color: #047857 !important;
+}
+
+button.text-white *,
+button[class*="text-white"] *:not([class*="text-purple-"]):not([class*="text-emerald-"]):not([class*="text-rose-"]):not([class*="text-amber-"]):not([class*="text-sky-"]):not([class*="text-cyan-"]),
+button[class*="bg-[#1b2c49]"] *:not([class*="text-purple-"]):not([class*="text-emerald-"]):not([class*="text-rose-"]):not([class*="text-amber-"]):not([class*="text-sky-"]):not([class*="text-cyan-"]),
+button[class*="bg-[#0f1b31]"] *:not([class*="text-purple-"]):not([class*="text-emerald-"]):not([class*="text-rose-"]):not([class*="text-amber-"]):not([class*="text-sky-"]):not([class*="text-cyan-"]),
+button[class*="bg-slate-900"] *,
+button[class*="bg-slate-800"] *,
+button[class*="bg-zinc-800"] *,
+button[class*="bg-zinc-900"] *,
+.btn-primary * {
+  color: #ffffff !important;
+}
+

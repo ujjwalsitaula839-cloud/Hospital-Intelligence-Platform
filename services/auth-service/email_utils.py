@@ -3,7 +3,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import logging
 import smtplib
-from typing import Optional
 
 from core.config import settings
 
@@ -118,15 +117,17 @@ def build_reset_email_html(reset_url: str, recipient_email: str) -> str:
     </div>
 
     <p>If the button doesn't work, copy and paste this link into your browser:</p>
-    <div class="link-fallback">{reset_url}</div>
+    <div class="link-fallback">
+      <a href="{reset_url}" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: underline; word-break: break-all;">{reset_url}</a>
+    </div>
 
     <p style="color: #f87171; font-size: 13px;">
-      ⚠️ <strong>Notice:</strong> This link expires in 15 minutes and can only be used once.
+      &#9888;&#65039; <strong>Notice:</strong> This link expires in 15 minutes and can only be used once.
     </p>
 
     <div class="footer">
       <p>If you did not request this password reset, you can safely ignore this email. Your existing credentials remain secure.</p>
-      <p>HIP Security Infrastructure • 21 CFR Part 11 &amp; HIPAA Compliant System</p>
+      <p>HIP Security Infrastructure &bull; 21 CFR Part 11 &amp; HIPAA Compliant System</p>
     </div>
   </div>
 </body>
@@ -163,8 +164,8 @@ async def send_password_reset_email(to_email: str, raw_token: str) -> None:
     )
     html_content = build_reset_email_html(reset_url, to_email)
 
-    msg.attach(MIMEText(text_content, "plain"))
-    msg.attach(MIMEText(html_content, "html"))
+    msg.attach(MIMEText(text_content, "plain", "utf-8"))
+    msg.attach(MIMEText(html_content, "html", "utf-8"))
 
     try:
         try:

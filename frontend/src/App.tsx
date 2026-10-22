@@ -16,7 +16,10 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (mustChangePassword) return <Navigate to="/force-reset" replace />;
   if (allowedRoles && claims && !allowedRoles.includes(claims.role)) {
-    return <h1 className="p-8 text-2xl font-bold text-red-600 font-mono">403 Forbidden - Access Denied</h1>;
+    // Gracefully redirect unauthorized roles to their authorized dashboard
+    if (claims.role === 'CLEANING_CREW') return <Navigate to="/dashboard/housekeeping" replace />;
+    if (claims.role === 'ADMIN') return <Navigate to="/dashboard/admin" replace />;
+    return <Navigate to="/dashboard/clinical" replace />;
   }
   return <>{children}</>;
 }
@@ -40,9 +43,17 @@ export default function App(): React.ReactElement {
             }
           />
           <Route
+            path="/command-center"
+            element={
+              <ProtectedRoute allowedRoles={['DOCTOR', 'NURSE', 'ADMIN']}>
+                <Clinical />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/dashboard/clinical"
             element={
-              <ProtectedRoute allowedRoles={['DOCTOR', 'NURSE']}>
+              <ProtectedRoute allowedRoles={['DOCTOR', 'NURSE', 'ADMIN']}>
                 <Clinical />
               </ProtectedRoute>
             }
@@ -50,7 +61,7 @@ export default function App(): React.ReactElement {
           <Route
             path="/dashboard/housekeeping"
             element={
-              <ProtectedRoute allowedRoles={['CLEANING_CREW']}>
+              <ProtectedRoute allowedRoles={['CLEANING_CREW', 'ADMIN']}>
                 <Housekeeping />
               </ProtectedRoute>
             }

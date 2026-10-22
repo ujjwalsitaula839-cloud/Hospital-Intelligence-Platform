@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, status
 import httpx
 from pydantic import BaseModel, Field
 import redis.asyncio as aioredis
-from sqlalchemy import and_, func, select, text, update
+from sqlalchemy import and_, case, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,8 +23,9 @@ from security import UserRole, require_roles, require_roles_or_internal
 logger = logging.getLogger("hip.bed")
 
 BEDS_GRID_CACHE_KEY = "beds:grid:all"
-CACHE_TTL_SECONDS = 300
+CACHE_TTL_SECONDS = 15
 BED_EVENTS_CHANNEL = "bed:events"
+BED_EVENTS_CHANNEL_ALT = "bed_events"
 PATIENT_SERVICE_URL = os.getenv("PATIENT_SERVICE_URL", "http://hip-patient-service:8002")
 INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
 
@@ -57,6 +58,23 @@ class BedCreate(BaseModel):
 
 
 class ReserveBedRequest(BaseModel):
+    admission_id: Optional[int] = None
+    encounter_id: Optional[int] = None
+    patient_id: Optional[int] = None
+    expected_version: Optional[int] = None
+    acuity_level: Optional[str] = "ESI_3"
+    primary_diagnosis: Optional[str] = Field(None, max_length=500)
+    diagnosis: Optional[str] = Field("Observation", max_length=500)
+    notes: Optional[str] = Field(None, max_length=1000)
+
+    def get_admission_id(self) -> Optional[int]:
+        return self.admission_id or self.encounter_id
+
+    def get_diagnosis(self) -> str:
+        return self.primary_diagnosis or self.diagnosis or "Observation"
+
+
+class ConfirmAdmitRequest(BaseModel):
     admission_id: Optional[int] = None
     encounter_id: Optional[int] = None
     patient_id: Optional[int] = None
@@ -125,13 +143,16 @@ async def publish_event(redis: Optional[aioredis.Redis], event_type: str, data: 
         return
     payload = {
         "event_type": event_type,
+        "type": event_type,
         "actor": actor or "system",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         **data
     }
+    msg_str = json.dumps(payload)
     try:
-        await redis.publish(BED_EVENTS_CHANNEL, json.dumps(payload))
-        logger.info("Published event %s to '%s'", event_type, BED_EVENTS_CHANNEL)
+        await redis.publish(BED_EVENTS_CHANNEL, msg_str)
+        await redis.publish(BED_EVENTS_CHANNEL_ALT, msg_str)
+        logger.info("Published event %s to '%s' and '%s'", event_type, BED_EVENTS_CHANNEL, BED_EVENTS_CHANNEL_ALT)
     except Exception as e:
         logger.critical("Dual-write degraded: Failed to publish event %s to Redis: %s", event_type, e)
 
@@ -173,14 +194,39 @@ async def ensure_seed_data(db: AsyncSession):
 
         seed_eq = [
             models.Equipment(serial_number="VENT-01", equipment_name="Hamilton C6 Ventilator", equipment_type_id=type_map.get("VENTILATOR", 1), department="ICU", version=1),
+            models.Equipment(serial_number="CARD-02", equipment_name="GE Carescape B650", equipment_type_id=type_map.get("CARDIAC MONITOR", 2), department="ICU", version=1),
+            models.Equipment(serial_number="VENT-03", equipment_name="Hamilton C6 Ventilator", equipment_type_id=type_map.get("VENTILATOR", 1), department="ICU", version=1),
+            models.Equipment(serial_number="CARD-03", equipment_name="GE Carescape B650", equipment_type_id=type_map.get("CARDIAC MONITOR", 2), department="ICU", version=1),
             models.Equipment(serial_number="VENT-02", equipment_name="Drager Evita V800", equipment_type_id=type_map.get("VENTILATOR", 1), department="EMERGENCY", version=1),
             models.Equipment(serial_number="CARD-01", equipment_name="Philips IntelliVue Monitor", equipment_type_id=type_map.get("CARDIAC MONITOR", 2), department="EMERGENCY", version=1),
-            models.Equipment(serial_number="CARD-02", equipment_name="GE Carescape B650", equipment_type_id=type_map.get("CARDIAC MONITOR", 2), department="ICU", version=1),
             models.Equipment(serial_number="PUMP-01", equipment_name="Alaris MedSystem III Pump", equipment_type_id=type_map.get("INFUSION PUMP", 3), department="EMERGENCY", version=1),
             models.Equipment(serial_number="CART-01", equipment_name="Zoll R Series Crash Cart", equipment_type_id=type_map.get("CRASH CART", 4), department="EMERGENCY", version=1),
         ]
         for eq in seed_eq:
             db.add(eq)
+        await db.commit()
+
+    # Startup Sanity & Consistency: Ensure all DIRTY and CLEANING beds have active tasks
+    dirty_beds_res = await db.execute(select(models.Bed).where(models.Bed.status.in_(["DIRTY", "CLEANING_IN_PROGRESS"])))
+    startup_changed = False
+    for b in dirty_beds_res.scalars().all():
+        active_task = (await db.execute(
+            select(models.CleaningTask).where(
+                models.CleaningTask.bed_id == b.bed_id,
+                models.CleaningTask.status.in_(["PENDING", "IN_PROGRESS"])
+            )
+        )).scalars().first()
+        if not active_task:
+            target_status = "IN_PROGRESS" if b.status == "CLEANING_IN_PROGRESS" else "PENDING"
+            db.add(models.CleaningTask(
+                bed_id=b.bed_id,
+                status=target_status,
+                personnel_id=2 if target_status == "IN_PROGRESS" else None,
+                started_datetime=func.now() if target_status == "IN_PROGRESS" else None,
+                disinfection_notes=f"Startup sanity: auto-queued task for {b.status} bed {b.bed_code}"
+            ))
+            startup_changed = True
+    if startup_changed:
         await db.commit()
 
 
@@ -195,6 +241,126 @@ async def health_check(db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Service health check failed."
         )
+
+
+async def _ensure_icu_equipment_allocated(db: AsyncSession, admission_id: Optional[int], user_id: int = 1) -> List[int]:
+    """Auto-assigns both ICU equipment tools (1 Ventilator & 1 Cardiac Monitor) to an ICU admission."""
+    if not admission_id or admission_id <= 0:
+        return []
+
+    # Check active equipment allocations for this admission
+    active_alloc_rows = (await db.execute(
+        select(models.EquipmentAllocation.equipment_id, models.Equipment.equipment_type_id, models.Equipment.equipment_name)
+        .join(models.Equipment, models.Equipment.equipment_id == models.EquipmentAllocation.equipment_id)
+        .where(
+            models.EquipmentAllocation.admission_id == admission_id,
+            models.EquipmentAllocation.status == "ACTIVE",
+            models.EquipmentAllocation.end_datetime.is_(None)
+        )
+    )).all()
+
+    has_ventilator = any(
+        r[1] == 1 or "VENTILATOR" in (r[2] or "").upper()
+        for r in active_alloc_rows
+    )
+    has_cardiac_monitor = any(
+        r[1] == 2 or "CARDIAC" in (r[2] or "").upper() or "MONITOR" in (r[2] or "").upper()
+        for r in active_alloc_rows
+    )
+
+    assigned_ids = []
+
+    # 1. Allocate Ventilator if not yet allocated
+    if not has_ventilator:
+        vent_stmt = (
+            select(models.Equipment)
+            .where(
+                or_(
+                    models.Equipment.equipment_type_id == 1,
+                    models.Equipment.equipment_name.ilike("%Ventilator%"),
+                    models.Equipment.serial_number.ilike("VENT-%")
+                ),
+                models.Equipment.status == "AVAILABLE"
+            )
+            .order_by(
+                case((models.Equipment.department == "ICU", 1), else_=2),
+                models.Equipment.equipment_id.asc()
+            )
+            .limit(1)
+        )
+        vent_item = (await db.execute(vent_stmt)).scalars().first()
+
+        if not vent_item:
+            count_val = (await db.execute(select(func.count(models.Equipment.equipment_id)))).scalar() or 0
+            vent_item = models.Equipment(
+                equipment_type_id=1,
+                serial_number=f"VENT-ICU-{count_val + 1:02d}",
+                equipment_name="Hamilton C6 Ventilator",
+                department="ICU",
+                status="AVAILABLE",
+                version=1
+            )
+            db.add(vent_item)
+            await db.flush()
+
+        vent_item.status = "ALLOCATED"
+        vent_item.version += 1
+        db.add(models.EquipmentAllocation(
+            equipment_id=vent_item.equipment_id,
+            admission_id=admission_id,
+            allocated_by_personnel_id=user_id,
+            status="ACTIVE",
+            start_datetime=func.now()
+        ))
+        assigned_ids.append(vent_item.equipment_id)
+
+    # 2. Allocate Cardiac Monitor if not yet allocated
+    if not has_cardiac_monitor:
+        card_stmt = (
+            select(models.Equipment)
+            .where(
+                or_(
+                    models.Equipment.equipment_type_id == 2,
+                    models.Equipment.equipment_name.ilike("%Monitor%"),
+                    models.Equipment.serial_number.ilike("CARD-%")
+                ),
+                models.Equipment.status == "AVAILABLE"
+            )
+            .order_by(
+                case((models.Equipment.department == "ICU", 1), else_=2),
+                models.Equipment.equipment_id.asc()
+            )
+            .limit(1)
+        )
+        card_item = (await db.execute(card_stmt)).scalars().first()
+
+        if not card_item:
+            count_val = (await db.execute(select(func.count(models.Equipment.equipment_id)))).scalar() or 0
+            card_item = models.Equipment(
+                equipment_type_id=2,
+                serial_number=f"CARD-ICU-{count_val + 1:02d}",
+                equipment_name="GE Carescape B650",
+                department="ICU",
+                status="AVAILABLE",
+                version=1
+            )
+            db.add(card_item)
+            await db.flush()
+
+        card_item.status = "ALLOCATED"
+        card_item.version += 1
+        db.add(models.EquipmentAllocation(
+            equipment_id=card_item.equipment_id,
+            admission_id=admission_id,
+            allocated_by_personnel_id=user_id,
+            status="ACTIVE",
+            start_datetime=func.now()
+        ))
+        assigned_ids.append(card_item.equipment_id)
+
+    if assigned_ids:
+        await db.commit()
+    return assigned_ids
 
 
 async def _build_bed_grid(db: AsyncSession) -> dict:
@@ -244,6 +410,24 @@ async def _build_bed_grid(db: AsyncSession) -> dict:
     for b in beds:
         active_alloc = active_bed_alloc_map.get(b.bed_id)
         active_adm_id = active_alloc.admission_id if active_alloc else None
+
+        # Self-healing safeguard: If an ICU bed is RESERVED or OCCUPIED but has < 2 tools, auto-assign now!
+        if b.department.upper() == "ICU" and active_adm_id and active_adm_id > 0:
+            existing_tools = admission_eq_map.get(active_adm_id, [])
+            if len(existing_tools) < 2:
+                newly_assigned = await _ensure_icu_equipment_allocated(db, active_adm_id, 1)
+                if newly_assigned:
+                    fresh_eq_rows = (await db.execute(
+                        select(models.Equipment.equipment_name)
+                        .join(models.EquipmentAllocation, models.EquipmentAllocation.equipment_id == models.Equipment.equipment_id)
+                        .where(
+                            models.EquipmentAllocation.admission_id == active_adm_id,
+                            models.EquipmentAllocation.status == "ACTIVE",
+                            models.EquipmentAllocation.end_datetime.is_(None)
+                        )
+                    )).scalars().all()
+                    admission_eq_map[active_adm_id] = list(fresh_eq_rows)
+
         eq_list = (admission_eq_map.get(active_adm_id, []) if active_adm_id else []) + admission_eq_map.get(-b.bed_id, [])
         updated_ts = b.update_datetime.isoformat() if b.update_datetime else None
 
@@ -259,6 +443,7 @@ async def _build_bed_grid(db: AsyncSession) -> dict:
             "bed_code": b.bed_code,
             "department": b.department,
             "room_number": b.room_number,
+            "floor_number": getattr(b, "floor_number", 1) or 1,
             "bed_type": b.bed_type,
             "status": b.status,
             "version": b.version,
@@ -276,6 +461,8 @@ async def _build_bed_grid(db: AsyncSession) -> dict:
     return {"beds": bed_list}
 
 
+@app.get("")
+@app.get("/")
 @app.get("/grid")
 async def get_bed_grid(
     current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.CLEANING_CREW)),
@@ -390,19 +577,22 @@ async def _resolve_active_cleaning_tasks(
     return len(tasks)
 
 
+@app.put("/{bed_code}/status")
+@app.put("/status/{bed_code}")
 @app.put("/admin/status/{bed_code}")
 async def admin_update_bed_status(
     bed_code: str,
     req: AdminBedStatusRequest,
-    current_user: Dict[str, Any] = Depends(require_roles(UserRole.ADMIN)),
+    current_user: Dict[str, Any] = Depends(require_roles_or_internal(UserRole.ADMIN, UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
     """
-    Administrative state override for physical bed assets (AVAILABLE, DIRTY, CLEANING_IN_PROGRESS, MAINTENANCE).
+    State override for physical bed assets (AVAILABLE, DIRTY, CLEANING_IN_PROGRESS, MAINTENANCE).
     Safely releases any orphaned allocations, manages cleaning tasks, and broadcasts real-time WebSocket events.
     """
-    target_status = req.status.upper()
+    raw_status = req.status.upper()
+    target_status = "CLEANING_IN_PROGRESS" if raw_status == "CLEANING" else raw_status
     valid_statuses = {"AVAILABLE", "DIRTY", "CLEANING_IN_PROGRESS", "MAINTENANCE"}
     if target_status in ("RESERVED", "OCCUPIED"):
         raise HTTPException(
@@ -412,10 +602,13 @@ async def admin_update_bed_status(
     if target_status not in valid_statuses:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid status '{target_status}'. Allowed administrative statuses are: {', '.join(sorted(valid_statuses))}."
+            detail=f"Invalid status '{target_status}'. Allowed statuses are: {', '.join(sorted(valid_statuses))}."
         )
 
-    bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == bed_code.upper()))
+    if bed_code.isdigit():
+        bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_id == int(bed_code)))
+    else:
+        bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == bed_code.upper()))
     bed = bed_result.scalars().first()
     if not bed:
         raise HTTPException(status_code=404, detail="Bed location not found.")
@@ -531,7 +724,7 @@ async def _verify_admission_active(
 
 
 async def _execute_bed_reservation(
-    db: AsyncSession, bed: models.Bed, admission_id: int, user_id: int, expected_version: Optional[int]
+    db: AsyncSession, bed: models.Bed, admission_id: int, user_id: int, expected_version: Optional[int] = None
 ) -> models.BedAllocation:
     """Executes optimistic-locked Bed state update and inserts BedAllocation record."""
     current_version = expected_version if expected_version is not None else bed.version
@@ -552,7 +745,46 @@ async def _execute_bed_reservation(
         )
 
     bed.status = "RESERVED"
-    bed.version = current_version + 1
+    # Ensure no lingering active allocations for this bed exist
+    curr_alloc_res = await db.execute(
+        select(models.BedAllocation).where(
+            and_(
+                models.BedAllocation.bed_id == bed.bed_id,
+                models.BedAllocation.status.in_(["RESERVED", "OCCUPIED"]),
+                models.BedAllocation.end_datetime.is_(None)
+            )
+        )
+    )
+    for curr_alloc in curr_alloc_res.scalars().all():
+        curr_alloc.status = "COMPLETED"
+        curr_alloc.end_datetime = func.now()
+        curr_alloc.update_datetime = func.now()
+
+    # If this admission was actively allocated to another bed, complete it and mark the old bed DIRTY
+    prior_alloc_res = await db.execute(
+        select(models.BedAllocation).where(
+            and_(
+                models.BedAllocation.admission_id == admission_id,
+                models.BedAllocation.status.in_(["RESERVED", "OCCUPIED"]),
+                models.BedAllocation.end_datetime.is_(None)
+            )
+        )
+    )
+    for prior_alloc in prior_alloc_res.scalars().all():
+        if prior_alloc.bed_id != bed.bed_id:
+            prior_alloc.status = "COMPLETED"
+            prior_alloc.end_datetime = func.now()
+            prior_alloc.update_datetime = func.now()
+            prior_bed_res = await db.execute(select(models.Bed).where(models.Bed.bed_id == prior_alloc.bed_id))
+            prior_bed = prior_bed_res.scalars().first()
+            if prior_bed:
+                prior_bed.status = "DIRTY"
+                prior_bed.version += 1
+                prior_bed.update_datetime = func.now()
+                await _create_or_update_cleaning_task(
+                    db, prior_bed.bed_id, prior_alloc.allocation_id, f"Auto-generated on patient move to Bed {bed.bed_code}"
+                )
+
     new_alloc = models.BedAllocation(
         bed_id=bed.bed_id,
         admission_id=admission_id,
@@ -606,6 +838,11 @@ async def reserve_bed(
         except httpx.RequestError:
             raise HTTPException(status_code=503, detail="Unable to reach Patient & Admission service.")
 
+    bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == bed_code.upper()))
+    bed = bed_result.scalars().first()
+    if not bed:
+        raise HTTPException(status_code=404, detail="Bed location not found.")
+
     alloc_check = await db.execute(
         select(models.BedAllocation).where(
             models.BedAllocation.admission_id == admission_id,
@@ -613,37 +850,28 @@ async def reserve_bed(
             models.BedAllocation.end_datetime.is_(None)
         )
     )
-    if alloc_check.scalars().first():
+    existing_alloc = alloc_check.scalars().first()
+    if existing_alloc:
+        # Idempotent: If this admission already has a RESERVED allocation on this SAME bed, succeed gracefully
+        if existing_alloc.bed_id == bed.bed_id and existing_alloc.status == "RESERVED":
+            if bed.department.upper() == "ICU":
+                await _ensure_icu_equipment_allocated(db, admission_id, current_user["user_id"])
+            await invalidate_grid_cache(redis)
+            return {
+                "status": "SUCCESS",
+                "message": f"Bed {bed_code} is already reserved for admission #{admission_id}.",
+                "bed_id": bed.bed_id,
+                "allocation_id": existing_alloc.allocation_id
+            }
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Admission #{admission_id} already has an active bed reservation or stay.")
 
-    bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == bed_code.upper()))
-    bed = bed_result.scalars().first()
-    if not bed:
-        raise HTTPException(status_code=404, detail="Bed location not found.")
-
     if bed.status != "AVAILABLE":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Bed {bed_code} is currently {bed.status} (must be AVAILABLE).")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Bed {bed_code} is currently {bed.status} (must be AVAILABLE to reserve).")
 
     new_alloc = await _execute_bed_reservation(db, bed, admission_id, current_user["user_id"], req.expected_version)
 
     if bed.department.upper() == "ICU":
-        avail_icu_eq = (await db.execute(
-            select(models.Equipment)
-            .where(models.Equipment.department == "ICU", models.Equipment.status == "AVAILABLE")
-        )).scalars().all()
-        for eq_item in avail_icu_eq:
-            eq_item.status = "ALLOCATED"
-            eq_item.version += 1
-            auto_alloc = models.EquipmentAllocation(
-                equipment_id=eq_item.equipment_id,
-                admission_id=admission_id,
-                allocated_by_personnel_id=current_user["user_id"],
-                status="ACTIVE",
-                start_datetime=func.now()
-            )
-            db.add(auto_alloc)
-        if avail_icu_eq:
-            await db.commit()
+        await _ensure_icu_equipment_allocated(db, admission_id, current_user["user_id"])
 
     await invalidate_grid_cache(redis)
     await publish_event(redis, "BED_RESERVED", {
@@ -678,59 +906,104 @@ async def reserve_bed(
 @app.put("/admit/{bed_code}")
 async def confirm_admission(
     bed_code: str,
+    req: Optional[ConfirmAdmitRequest] = None,
     current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    """Transitions reserved bed asset and stay ledger to OCCUPIED."""
+    """Transitions reserved or available bed asset and stay ledger to OCCUPIED."""
     bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == bed_code.upper()))
     bed = bed_result.scalars().first()
     if not bed:
         raise HTTPException(status_code=404, detail="Bed location not found.")
 
-    if bed.status != "RESERVED":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Bed {bed_code} must be in RESERVED state to confirm arrival (current: {bed.status}).")
+    admission_id = (req.admission_id or req.encounter_id) if req else None
 
-    alloc_result = await db.execute(
-        select(models.BedAllocation).where(
-            and_(
-                models.BedAllocation.bed_id == bed.bed_id,
-                models.BedAllocation.status == "RESERVED",
-                models.BedAllocation.end_datetime.is_(None)
+    # Idempotent: If bed is already OCCUPIED, succeed gracefully
+    if bed.status == "OCCUPIED":
+        effective_adm_id = admission_id
+        if not effective_adm_id:
+            alloc_res = await db.execute(
+                select(models.BedAllocation.admission_id).where(
+                    models.BedAllocation.bed_id == bed.bed_id,
+                    models.BedAllocation.status == "OCCUPIED",
+                    models.BedAllocation.end_datetime.is_(None)
+                )
             )
-        )
-    )
-    active_alloc = alloc_result.scalars().first()
+            effective_adm_id = alloc_res.scalar()
+        if bed.department.upper() == "ICU" and effective_adm_id:
+            await _ensure_icu_equipment_allocated(db, effective_adm_id, current_user["user_id"])
+        await invalidate_grid_cache(redis)
+        return {
+            "status": "SUCCESS",
+            "message": f"Bed {bed_code} is already OCCUPIED.",
+            "bed_code": bed_code.upper(),
+            "admission_id": effective_adm_id
+        }
 
-    current_version = bed.version
-    stmt = (
-        update(models.Bed)
-        .where(
-            and_(
-                models.Bed.bed_id == bed.bed_id,
-                models.Bed.status == "RESERVED",
-                models.Bed.version == current_version
+    active_alloc = None
+    if bed.status == "AVAILABLE":
+        if not admission_id and req and req.patient_id:
+            internal_headers = {
+                "X-User-Id": str(current_user["user_id"]),
+                "X-User-Role": current_user["role"],
+                "X-Internal-Token": INTERNAL_SERVICE_SECRET,
+            }
+            async with httpx.AsyncClient() as client:
+                admission_id = await _resolve_or_create_admission(client, req, internal_headers)
+
+        if not admission_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Bed {bed_code} is currently AVAILABLE. An admission_id or patient_id is required to admit directly to this bed."
             )
-        )
-        .values(status="OCCUPIED", version=current_version + 1, update_datetime=func.now())
-    )
-    res = await db.execute(stmt)
-    if res.rowcount == 0:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="State conflict: Bed state changed concurrently.")
-
-    if active_alloc:
+        active_alloc = await _execute_bed_reservation(db, bed, admission_id, current_user["user_id"])
         active_alloc.status = "OCCUPIED"
-        active_alloc.update_datetime = func.now()
+        bed.status = "OCCUPIED"
+        bed.version += 1
+        bed.update_datetime = func.now()
+        await db.commit()
+        await db.refresh(bed)
+    elif bed.status == "RESERVED":
+        alloc_result = await db.execute(
+            select(models.BedAllocation).where(
+                and_(
+                    models.BedAllocation.bed_id == bed.bed_id,
+                    models.BedAllocation.status == "RESERVED",
+                    models.BedAllocation.end_datetime.is_(None)
+                )
+            )
+        )
+        active_alloc = alloc_result.scalars().first()
 
-    await db.commit()
+        bed.status = "OCCUPIED"
+        bed.version += 1
+        bed.update_datetime = func.now()
+
+        if active_alloc:
+            active_alloc.status = "OCCUPIED"
+            active_alloc.update_datetime = func.now()
+
+        await db.commit()
+        await db.refresh(bed)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Bed {bed_code} is {bed.status} (must be AVAILABLE or RESERVED to admit)."
+        )
+
+    effective_adm_id = active_alloc.admission_id if active_alloc else admission_id
+    if bed.department.upper() == "ICU" and effective_adm_id:
+        await _ensure_icu_equipment_allocated(db, effective_adm_id, current_user["user_id"])
+
     await invalidate_grid_cache(redis)
     await publish_event(redis, "BED_OCCUPIED", {
         "bed_id": bed.bed_id,
         "bed_code": bed_code.upper(),
         "allocation_id": active_alloc.allocation_id if active_alloc else None,
-        "admission_id": active_alloc.admission_id if active_alloc else None,
+        "admission_id": effective_adm_id,
         "status": "OCCUPIED",
-        "version": current_version + 1,
+        "version": bed.version,
         "message": f"Patient arrival confirmed at Bed {bed_code} (OCCUPIED)."
     }, actor=current_user.get("full_name") or current_user.get("username") or f"Staff #{current_user['user_id']}")
 
@@ -740,8 +1013,8 @@ async def confirm_admission(
         user_id=current_user.get("user_id"),
         resource_type="bed",
         resource_id=bed.bed_id,
-        details={"bed_code": bed_code.upper(), "admission_id": active_alloc.admission_id if active_alloc else None},
-        admission_id=active_alloc.admission_id if active_alloc else None
+        details={"bed_code": bed_code.upper(), "admission_id": effective_adm_id},
+        admission_id=effective_adm_id
     )
 
     return {"status": "SUCCESS", "message": f"Patient arrival confirmed. Bed {bed_code} is now OCCUPIED."}
@@ -824,6 +1097,13 @@ async def transfer_patient_bed(
         start_datetime=func.now()
     )
     db.add(new_to_alloc)
+
+    # Auto-assign ICU tools if transferring into ICU
+    if to_bed.department.upper() == "ICU":
+        await _ensure_icu_equipment_allocated(db, admission_id, personnel_id)
+    # Release ICU tools if stepping down from ICU to non-ICU
+    elif from_bed.department.upper() == "ICU" and to_bed.department.upper() != "ICU":
+        await _release_admission_equipment(db, admission_id)
 
     await _create_or_update_cleaning_task(
         db,
@@ -911,6 +1191,96 @@ async def _notify_patient_discharge(admission_id: int, user_id: Any, role: Any) 
             logger.warning("Could not notify patient service during discharge: %s", e)
 
 
+@app.put("/cancel-hold/{bed_code}")
+async def cancel_bed_hold(
+    bed_code: str,
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis)
+):
+    """
+    Cancels an unadmitted bed hold / reservation.
+    Releases any reserved equipment (e.g. ICU ventilators/monitors),
+    marks the allocation CANCELLED, notifies patient-service to close the staged admission,
+    and returns the physical bed directly to AVAILABLE (never DIRTY).
+    """
+    bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == bed_code.upper()))
+    bed = bed_result.scalars().first()
+    if not bed:
+        raise HTTPException(status_code=404, detail="Bed location not found.")
+
+    if bed.status == "AVAILABLE":
+        return {"status": "SUCCESS", "message": f"Bed {bed_code} is already AVAILABLE."}
+
+    # Find active reservation allocation
+    alloc_res = await db.execute(
+        select(models.BedAllocation).where(
+            models.BedAllocation.bed_id == bed.bed_id,
+            models.BedAllocation.status == "RESERVED",
+            models.BedAllocation.end_datetime.is_(None)
+        )
+    )
+    active_alloc = alloc_res.scalars().first()
+    staged_adm_id = active_alloc.admission_id if active_alloc else None
+
+    if active_alloc:
+        active_alloc.status = "CANCELLED"
+        active_alloc.end_datetime = func.now()
+        active_alloc.update_datetime = func.now()
+
+    # Release any staged equipment (critical for ICU holds with auto-provisioned vent/monitor)
+    if staged_adm_id:
+        await _release_admission_equipment(db, staged_adm_id)
+
+    # Transition bed asset directly to AVAILABLE (clean, unused)
+    current_version = bed.version
+    stmt = (
+        update(models.Bed)
+        .where(models.Bed.bed_id == bed.bed_id)
+        .values(status="AVAILABLE", version=current_version + 1, update_datetime=func.now())
+    )
+    await db.execute(stmt)
+    bed.status = "AVAILABLE"
+    bed.version = current_version + 1
+
+    # Auto-resolve any stray cleaning task for this bed so no PENDING cleaning task is left behind
+    await _resolve_active_cleaning_tasks(
+        db, bed.bed_id, current_user["user_id"], f"Auto-resolved: Hold cancelled on bed {bed_code}"
+    )
+
+    await db.commit()
+
+    # Notify patient service to discharge/close the staged admission so it doesn't block future reservations
+    if staged_adm_id:
+        await _notify_patient_discharge(staged_adm_id, current_user["user_id"], current_user["role"])
+
+    await invalidate_grid_cache(redis)
+    await publish_event(redis, "BED_AVAILABLE", {
+        "bed_id": bed.bed_id,
+        "bed_code": bed_code.upper(),
+        "status": "AVAILABLE",
+        "version": bed.version,
+        "message": f"Bed hold on {bed_code} cancelled. Bed is clean and AVAILABLE."
+    }, actor=current_user.get("full_name") or current_user.get("username") or f"Staff #{current_user['user_id']}")
+
+    await log_audit(
+        db=db,
+        action="CANCEL_BED_HOLD",
+        user_id=current_user.get("user_id"),
+        resource_type="bed",
+        resource_id=bed.bed_id,
+        details={"bed_code": bed_code.upper(), "admission_id": staged_adm_id},
+        admission_id=staged_adm_id
+    )
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Bed hold on {bed_code} cancelled. Bed returned to AVAILABLE without cleaning requirement.",
+        "bed_code": bed_code.upper(),
+        "bed_status": "AVAILABLE"
+    }
+
+
 @app.put("/discharge/{bed_code}")
 async def discharge_bed(
     bed_code: str,
@@ -918,7 +1288,7 @@ async def discharge_bed(
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    """Discharges bed stay, releases equipment, marks bed DIRTY, and creates a PENDING cleaning task."""
+    """Discharges bed stay, releases equipment. If bed was only on hold (RESERVED), it returns to AVAILABLE clean. If OCCUPIED, marks bed DIRTY."""
     bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == bed_code.upper()))
     bed = bed_result.scalars().first()
     if not bed:
@@ -927,11 +1297,15 @@ async def discharge_bed(
     if bed.status not in ("RESERVED", "OCCUPIED"):
         return {"status": "SUCCESS", "message": f"Bed is already {bed.status}."}
 
+    # If the bed was only on hold and never occupied, delegate to cancel_bed_hold so it returns to AVAILABLE clean
+    if bed.status == "RESERVED":
+        return await cancel_bed_hold(bed_code, current_user, db, redis)
+
     alloc_res = await db.execute(
         select(models.BedAllocation).where(
             and_(
                 models.BedAllocation.bed_id == bed.bed_id,
-                models.BedAllocation.status.in_(["RESERVED", "OCCUPIED"]),
+                models.BedAllocation.status == "OCCUPIED",
                 models.BedAllocation.end_datetime.is_(None)
             )
         )
@@ -1002,7 +1376,7 @@ async def release_admission_assets(
     """
     Internal endpoint called authoritatively by patient-service during clinical discharge.
     Releases all active equipment and bed allocations tied to the admission.
-    Safely handles ambulatory/triage patients who never had a physical bed assigned.
+    If bed was only RESERVED (staged hold), returns bed to AVAILABLE (not DIRTY) without cleaning task.
     """
     # 1. Multi-Equipment Asset Release (handles multiple active devices for this admission)
     released_equipment_ids = await _release_admission_equipment(db, admission_id)
@@ -1022,14 +1396,18 @@ async def release_admission_assets(
     bed_released = False
     released_bed_code = None
     cleaning_task_id = None
+    target_bed_status = "DIRTY"
 
     if active_alloc:
-        active_alloc.status = "COMPLETED"
+        is_staged_hold = (active_alloc.status == "RESERVED")
+        active_alloc.status = "CANCELLED" if is_staged_hold else "COMPLETED"
         active_alloc.end_datetime = func.now()
 
         bed = await db.get(models.Bed, active_alloc.bed_id)
         if bed:
             current_version = bed.version
+            # If the bed was only on hold and never occupied by patient, return directly to AVAILABLE
+            target_bed_status = "AVAILABLE" if is_staged_hold else "DIRTY"
             stmt = (
                 update(models.Bed)
                 .where(
@@ -1038,18 +1416,25 @@ async def release_admission_assets(
                         models.Bed.version == current_version
                     )
                 )
-                .values(status="DIRTY", version=current_version + 1, update_datetime=func.now())
+                .values(status=target_bed_status, version=current_version + 1, update_datetime=func.now())
             )
             await db.execute(stmt)
 
-            new_cleaning_task = await _create_or_update_cleaning_task(
-                db,
-                bed_id=bed.bed_id,
-                allocation_id=active_alloc.allocation_id,
-                notes=f"Auto-generated on clinical discharge of admission #{admission_id}"
-            )
-            await db.flush()
-            cleaning_task_id = new_cleaning_task.cleaning_id
+            if not is_staged_hold:
+                new_cleaning_task = await _create_or_update_cleaning_task(
+                    db,
+                    bed_id=bed.bed_id,
+                    allocation_id=active_alloc.allocation_id,
+                    notes=f"Auto-generated on clinical discharge of admission #{admission_id}"
+                )
+                await db.flush()
+                cleaning_task_id = new_cleaning_task.cleaning_id
+            else:
+                # Unoccupied hold cancelled: auto-resolve any leftover cleaning task
+                await _resolve_active_cleaning_tasks(
+                    db, bed.bed_id, current_user.get("user_id"), f"Auto-resolved: Unoccupied hold cancelled on {bed.bed_code}"
+                )
+
             released_bed_code = bed.bed_code
             bed_released = True
 
@@ -1059,13 +1444,14 @@ async def release_admission_assets(
     # 4. Redis cache invalidation and Pub/Sub ONLY after DB commit
     if bed_released and released_bed_code:
         await invalidate_grid_cache(redis)
-        await publish_event(redis, "BED_DIRTY", {
+        event_name = "BED_AVAILABLE" if target_bed_status == "AVAILABLE" else "BED_DIRTY"
+        await publish_event(redis, event_name, {
             "bed_code": released_bed_code,
             "discharged_admission_id": admission_id,
             "cleaning_id": cleaning_task_id,
-            "status": "DIRTY",
+            "status": target_bed_status,
             "version": current_version + 1,
-            "message": f"Bed {released_bed_code} discharged from admission #{admission_id}."
+            "message": f"Bed {released_bed_code} released from admission #{admission_id} ({target_bed_status})."
         }, actor=current_user.get("full_name") or current_user.get("username") or "Clinical Staff")
 
     await log_audit(
@@ -1074,7 +1460,7 @@ async def release_admission_assets(
         user_id=current_user.get("user_id"),
         resource_type="bed",
         resource_id=active_alloc.bed_id if active_alloc else None,
-        details={"admission_id": admission_id, "bed_code": released_bed_code},
+        details={"admission_id": admission_id, "bed_code": released_bed_code, "status": target_bed_status},
         admission_id=admission_id
     )
 
@@ -1115,9 +1501,32 @@ def _format_cleaning_task(t: models.CleaningTask) -> dict:
 @app.get("/cleaning/tasks")
 async def get_cleaning_tasks(
     status_filter: Optional[str] = Query(None, description="PENDING, IN_PROGRESS, COMPLETED"),
-    current_user: Dict[str, Any] = Depends(require_roles(UserRole.CLEANING_CREW, UserRole.NURSE)),
+    current_user: Dict[str, Any] = Depends(require_roles_or_internal(UserRole.CLEANING_CREW, UserRole.NURSE, UserRole.ADMIN, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db)
 ):
+    # Self-heal any dirty or cleaning beds that lack an active cleaning task
+    dirty_beds_res = await db.execute(select(models.Bed).where(models.Bed.status.in_(["DIRTY", "CLEANING_IN_PROGRESS"])))
+    changed = False
+    for b in dirty_beds_res.scalars().all():
+        active_task = (await db.execute(
+            select(models.CleaningTask).where(
+                models.CleaningTask.bed_id == b.bed_id,
+                models.CleaningTask.status.in_(["PENDING", "IN_PROGRESS"])
+            )
+        )).scalars().first()
+        if not active_task:
+            target_status = "IN_PROGRESS" if b.status == "CLEANING_IN_PROGRESS" else "PENDING"
+            db.add(models.CleaningTask(
+                bed_id=b.bed_id,
+                status=target_status,
+                personnel_id=2 if target_status == "IN_PROGRESS" else None,
+                started_datetime=func.now() if target_status == "IN_PROGRESS" else None,
+                disinfection_notes=f"Auto-queued sanitization task for {b.status} bed {b.bed_code}"
+            ))
+            changed = True
+    if changed:
+        await db.commit()
+
     stmt = (
         select(models.CleaningTask)
         .options(selectinload(models.CleaningTask.bed))
