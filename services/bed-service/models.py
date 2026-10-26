@@ -12,6 +12,7 @@ class Bed(Base):
     room_number = Column(String(20), nullable=False, default="101")
     bed_type = Column(String(30), default="STANDARD", nullable=False)  # STANDARD, ICU, BARIATRIC, ISOLATION
     status = Column(String(30), default="AVAILABLE", index=True, nullable=False)  # AVAILABLE, RESERVED, OCCUPIED, DIRTY, CLEANING_IN_PROGRESS, OUT_OF_SERVICE
+    floor_number = Column(Integer, default=1, nullable=False, index=True)
     version = Column(Integer, default=1, nullable=False)
     create_datetime = Column(DateTime(timezone=True), server_default=func.now())
     update_datetime = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

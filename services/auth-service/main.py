@@ -13,7 +13,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 import jwt
 import redis.asyncio as aioredis
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db, init_db
@@ -21,7 +21,6 @@ import models
 import schemas
 import security
 from security import UserRole, require_roles, get_current_user
-from core.config import settings
 from email_utils import send_password_reset_email
 
 logger = logging.getLogger("hip.auth")
@@ -225,8 +224,67 @@ async def lifespan(app: FastAPI):
                 db.add(seed_admin)
                 await db.commit()
                 logger.info("Default administrator seeded: admin@hospital.org (must_change_password=%s)", must_change)
+
+            # Ensure standard demo accounts exist for UI login shortcuts
+            demo_users = [
+                {
+                    "username": "nurse_jane",
+                    "email": "nurse_jane@hospital.org",
+                    "full_name": "Clinical Nurse Jane Doe",
+                    "role": "NURSE",
+                    "department": "EMERGENCY",
+                },
+                {
+                    "username": "dr_smith",
+                    "email": "dr_smith@hospital.org",
+                    "full_name": "Attending Dr. Smith",
+                    "role": "DOCTOR",
+                    "department": "GENERAL_MEDICINE",
+                },
+                {
+                    "username": "cleaner_bob",
+                    "email": "cleaner_bob@hospital.org",
+                    "full_name": "Housekeeping Specialist Bob",
+                    "role": "CLEANING_CREW",
+                    "department": "FACILITIES",
+                },
+            ]
+
+            default_pw = os.getenv("TEST_USER_PASSWORD", "SecurePassword123!")
+            hashed_pw = security.hashed_password(default_pw)
+
+            for u in demo_users:
+                check = await db.execute(
+                    select(models.Personnel).where(
+                        or_(
+                            models.Personnel.username == u["username"],
+                            models.Personnel.email == u["email"]
+                        )
+                    )
+                )
+                existing = check.scalars().first()
+                if not existing:
+                    user_obj = models.Personnel(
+                        username=u["username"],
+                        email=u["email"],
+                        hashed_password=hashed_pw,
+                        full_name=u["full_name"],
+                        role=u["role"],
+                        department=u["department"],
+                        is_active=True,
+                        must_change_password=False
+                    )
+                    db.add(user_obj)
+                    await db.commit()
+                    logger.info("Seeded demo account: %s (%s)", u["username"], u["email"])
+                else:
+                    # Update email if needed to match canonical shortcut
+                    if existing.email != u["email"]:
+                        existing.email = u["email"]
+                        existing.is_active = True
+                        await db.commit()
     except Exception as e:
-        logger.warning("Could not check/seed default administrator: %s", e)
+        logger.warning("Could not check/seed default personnel: %s", e)
     yield
 
 
@@ -341,10 +399,18 @@ async def login_personnel(
     redis = await get_redis_client()
     try:
         client_ip = get_client_ip(request)
-        rate_key = f"rate:login:{credentials.email}"
+        raw_identifier = credentials.email.strip().lower()
+        rate_key = f"rate:login:{raw_identifier}"
         await check_rate_limit(redis, rate_key, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW)
 
-        result = await db.execute(select(models.Personnel).where(models.Personnel.email == credentials.email))
+        query_filters = [
+            func.lower(models.Personnel.email) == raw_identifier,
+            func.lower(models.Personnel.username) == raw_identifier,
+        ]
+        if "@" not in raw_identifier:
+            query_filters.append(func.lower(models.Personnel.email) == f"{raw_identifier}@hospital.org")
+
+        result = await db.execute(select(models.Personnel).where(or_(*query_filters)))
         personnel = result.scalars().first()
 
         if not personnel or not security.verify_password(credentials.password, personnel.hashed_password):
@@ -368,6 +434,12 @@ async def login_personnel(
             )
             await db.commit()
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive. Contact system administrator.")
+
+        # Clear rate limit counter on successful password verification
+        try:
+            await redis.delete(rate_key)
+        except Exception:
+            pass
 
         # Update last login
         personnel.last_login_datetime = func.now()
@@ -607,13 +679,21 @@ async def forgot_password(
     Implements strict anti-user enumeration: returns identical HTTP 200 for existing and
     non-existing accounts, while equalizing execution time to defeat timing attacks.
     """
-    normalized_email = body.email.strip().lower()
+    raw_identifier = body.email.strip().lower()
 
-    # Query personnel by email
+    # Query personnel by email OR username (e.g. nurse_jane, cleaner_bob, admin@hospital.org)
+    query_filters = [
+        func.lower(models.Personnel.email) == raw_identifier,
+        func.lower(models.Personnel.username) == raw_identifier,
+    ]
+    if "@" not in raw_identifier:
+        query_filters.append(func.lower(models.Personnel.email) == f"{raw_identifier}@hospital.org")
+    else:
+        prefix = raw_identifier.split("@")[0]
+        query_filters.append(func.lower(models.Personnel.username) == prefix)
+
     result = await db.execute(
-        select(models.Personnel).where(
-            func.lower(models.Personnel.email) == normalized_email
-        )
+        select(models.Personnel).where(or_(*query_filters))
     )
     user = result.scalars().first()
 
@@ -916,6 +996,7 @@ async def get_all_staff(
 async def deactivate_personnel(
     personnel_id: int,
     request: Request,
+    body: Optional[schemas.DeactivatePersonnelRequest] = None,
     current_user: Dict[str, Any] = Depends(require_roles(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
@@ -930,7 +1011,15 @@ async def deactivate_personnel(
     if not personnel:
         raise HTTPException(status_code=404, detail="Personnel not found.")
 
+    reason = body.reason if body and body.reason else "Administrative Decision"
+    notes = body.notes if body and body.notes else None
+
     personnel.is_active = False
+    personnel.deactivation_reason = reason
+    personnel.deactivation_notes = notes
+    personnel.deactivated_at = func.now()
+    personnel.deactivated_by = current_user.get("username") or str(current_user["user_id"])
+
     await revoke_all_user_tokens(db, personnel_id)
     await db.commit()
 
@@ -939,11 +1028,51 @@ async def deactivate_personnel(
         db, "DEACTIVATE", user_id=current_user["user_id"],
         resource_type="PERSONNEL", resource_id=personnel_id,
         ip_address=client_ip,
-        details={"target_username": personnel.username, "deactivated_by": current_user["username"]}
+        details={
+            "target_username": personnel.username,
+            "deactivated_by": current_user["username"],
+            "reason": reason,
+            "notes": notes
+        }
     )
     await db.commit()
 
-    return {"status": "SUCCESS", "message": f"Personnel {personnel.username} deactivated (is_active=False). All tokens revoked. History preserved."}
+    return {
+        "status": "SUCCESS",
+        "message": f"Personnel {personnel.username} deactivated. Reason: {reason}.",
+        "deactivation_reason": reason,
+        "deactivation_notes": notes
+    }
+
+
+# ===========================================================================
+# UPDATE PERSONNEL INACTIVITY NOTES & REASON — Admin only
+# ===========================================================================
+
+@app.put("/personnel/{personnel_id}/notes")
+async def update_personnel_notes(
+    personnel_id: int,
+    body: schemas.UpdatePersonnelNotesRequest,
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update deactivation notes and reason for a personnel account."""
+    personnel = await db.get(models.Personnel, personnel_id)
+    if not personnel:
+        raise HTTPException(status_code=404, detail="Personnel not found.")
+
+    if body.reason is not None:
+        personnel.deactivation_reason = body.reason
+    if body.notes is not None:
+        personnel.deactivation_notes = body.notes
+
+    await db.commit()
+    return {
+        "status": "SUCCESS",
+        "message": f"Inactivity notes updated for {personnel.username}.",
+        "deactivation_reason": personnel.deactivation_reason,
+        "deactivation_notes": personnel.deactivation_notes
+    }
 
 
 # ===========================================================================
@@ -963,6 +1092,10 @@ async def activate_personnel(
         raise HTTPException(status_code=404, detail="Personnel not found.")
 
     personnel.is_active = True
+    personnel.deactivation_reason = None
+    personnel.deactivation_notes = None
+    personnel.deactivated_at = None
+    personnel.deactivated_by = None
     await db.commit()
 
     client_ip = get_client_ip(request)

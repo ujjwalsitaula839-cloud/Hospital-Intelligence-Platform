@@ -6,7 +6,6 @@ import re
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
-from fastapi.responses import JSONResponse
 import httpx
 from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 from sqlalchemy import and_, func, select
@@ -136,6 +135,8 @@ class AdmissionCreate(BaseModel):
     diagnosis: Optional[str] = Field(None, max_length=500, description="Alias for primary diagnosis")
     acuity_level: Optional[str] = Field("ESI_3", description="ESI_1 through ESI_5")
     notes: Optional[str] = Field(None, max_length=1000)
+    bed_code: Optional[str] = Field(None, max_length=30, description="Bed code to allocate atomically")
+    bed_id: Optional[int] = Field(None, description="Bed ID to allocate atomically")
 
     def get_primary_diagnosis(self) -> str:
         return self.primary_diagnosis or self.diagnosis or "Observation"
@@ -428,6 +429,43 @@ async def create_admission(
         )
     await db.refresh(new_admission)
 
+    # Atomic Bed Coordination: If bed_code/bed_id provided, ensure bed transitions to OCCUPIED or rollback
+    target_bed = admission_in.bed_code or (str(admission_in.bed_id) if admission_in.bed_id else None)
+    if target_bed:
+        internal_headers = {
+            "X-User-Id": str(current_user.get("user_id", 0)),
+            "X-User-Role": str(current_user.get("role", "NURSE")),
+            "X-Internal-Token": INTERNAL_SERVICE_SECRET,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                bed_resp = await client.put(
+                    f"{BED_SERVICE_URL}/admit/{target_bed}",
+                    headers=internal_headers,
+                    json={
+                        "admission_id": new_admission.admission_id,
+                        "patient_id": new_admission.patient_id
+                    }
+                )
+                if bed_resp.status_code != 200:
+                    err_data = bed_resp.json() if bed_resp.headers.get("content-type", "").startswith("application/json") else {}
+                    err_msg = err_data.get("detail", f"Bed {target_bed} could not be transitioned to OCCUPIED (HTTP {bed_resp.status_code}).")
+                    await db.delete(new_admission)
+                    await db.commit()
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Admission rolled back: {err_msg}"
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            await db.delete(new_admission)
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Admission rolled back: unable to coordinate with bed-service: {e}"
+            )
+
     nurse_id = current_user.get("user_id")
     if current_user.get("role") == "NURSE" and nurse_id:
         assignment = models.PatientNurseAssignment(
@@ -444,7 +482,7 @@ async def create_admission(
         user_id=nurse_id,
         resource_type="admission",
         resource_id=new_admission.admission_id,
-        details={"patient_id": new_admission.patient_id, "acuity": new_admission.acuity_level}
+        details={"patient_id": new_admission.patient_id, "acuity": new_admission.acuity_level, "bed": target_bed}
     )
     return new_admission
 
@@ -527,8 +565,12 @@ async def get_admissions_by_patient(
     return res.scalars().all()
 
 
+@app.post("/admissions/{admission_id}/discharge")
+@app.post("/admissions/discharge/{admission_id}")
+@app.put("/admissions/{admission_id}/discharge")
 @app.put("/admissions/discharge/{admission_id}")
-@app.put("/encounters/discharge/{admission_id}")
+@app.post("/encounters/{admission_id}/discharge")
+@app.put("/encounters/{admission_id}/discharge")
 async def discharge_admission(
     admission_id: int,
     current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
@@ -541,23 +583,7 @@ async def discharge_admission(
     if admission.discharge_datetime is not None:
         return {"status": "SUCCESS", "message": f"Admission #{admission_id} is already discharged."}
 
-    admission.discharge_datetime = func.now()
-
-    nurse_stmt = select(models.PatientNurseAssignment).where(
-        and_(
-            models.PatientNurseAssignment.admission_id == admission_id,
-            models.PatientNurseAssignment.status == "ACTIVE"
-        )
-    )
-    active_assignments = (await db.execute(nurse_stmt)).scalars().all()
-    for na in active_assignments:
-        na.status = "COMPLETED"
-        na.end_datetime = func.now()
-
-    # Step 1: Commit clinical discharge in PostgreSQL FIRST to release locks before network I/O
-    await db.commit()
-
-    # Step 2: Unidirectional downstream call to release physical assets (bed, equipment) in bed-service
+    # Step 1: Verify bed is successfully transitioned to DIRTY in bed-service BEFORE committing discharge
     internal_headers = {
         "X-User-Id": str(current_user.get("user_id", 0)),
         "X-User-Role": str(current_user.get("role", "NURSE")),
@@ -573,9 +599,35 @@ async def discharge_admission(
             if resp.status_code == 200:
                 bed_release_status = "RELEASED"
             else:
-                logger.warning("Bed service release returned status %s for admission #%s", resp.status_code, admission_id)
+                logger.error("Bed service release returned status %s for admission #%s", resp.status_code, admission_id)
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Discharge failed: bed-service could not transition bed to DIRTY (HTTP {resp.status_code})."
+                )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.warning("Could not reach bed-service to release assets for admission #%s: %s", admission_id, e)
+        logger.error("Could not reach bed-service to release assets for admission #%s: %s", admission_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Discharge failed: unable to communicate with bed-service to transition bed to DIRTY: {e}"
+        )
+
+    # Step 2: Bed successfully flagged as DIRTY -> commit discharge timestamp
+    admission.discharge_datetime = func.now()
+
+    nurse_stmt = select(models.PatientNurseAssignment).where(
+        and_(
+            models.PatientNurseAssignment.admission_id == admission_id,
+            models.PatientNurseAssignment.status == "ACTIVE"
+        )
+    )
+    active_assignments = (await db.execute(nurse_stmt)).scalars().all()
+    for na in active_assignments:
+        na.status = "COMPLETED"
+        na.end_datetime = func.now()
+
+    await db.commit()
 
     await log_audit(
         db=db,
@@ -831,6 +883,17 @@ async def update_patient(
     await db.commit()
     await db.refresh(patient)
 
+    try:
+        internal_headers = {
+            "X-User-Id": str(current_user.get("user_id", 0)),
+            "X-User-Role": "ADMIN",
+            "X-Internal-Token": INTERNAL_SERVICE_SECRET,
+        }
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.post(f"{BED_SERVICE_URL}/internal/cache/invalidate", headers=internal_headers)
+    except Exception as e:
+        logger.warning("Could not invalidate bed cache on patient update: %s", e)
+
     user_id = current_user.get("user_id") or 0
     await log_audit(
         db=db,
@@ -912,12 +975,64 @@ async def activate_patient(
 
 @app.delete("/patient/{patient_id}")
 @app.delete("/patients/{patient_id}")
-async def reject_delete_patient(patient_id: int):
-    """Explicitly reject hard deletion of patient records under HIPAA retention rules."""
-    return JSONResponse(
-        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
-        headers={"Allow": "GET, POST, PUT"},
-        content={
-            "detail": "Hard deletion of healthcare records is strictly prohibited under HIPAA compliance. Use PUT /patient/{id}/deactivate."
-        }
+async def delete_patient(
+    patient_id: int,
+    current_user: dict = Depends(require_roles_or_internal(UserRole.ADMIN, UserRole.DOCTOR, UserRole.NURSE)),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Deletes an unadmitted or cancelled patient record (e.g. from a cancelled EMS radio call or cancelled hold).
+    Strictly safeguards records with actual clinical encounters/observations to comply with medical record retention.
+    """
+    patient = await db.get(models.Patient, patient_id)
+    if not patient:
+        return {"status": "SUCCESS", "message": f"Patient #{patient_id} does not exist."}
+
+    # Check if patient has any clinical observations
+    obs_stmt = select(models.PatientObservation).join(models.Admission).where(models.Admission.patient_id == patient_id)
+    has_observations = (await db.execute(obs_stmt)).scalars().first() is not None
+    if has_observations:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete patient with recorded clinical observations. Deactivate record instead."
+        )
+
+    # Check if patient has any active stays
+    active_adm_stmt = select(models.Admission).where(
+        models.Admission.patient_id == patient_id,
+        models.Admission.discharge_datetime.is_(None)
     )
+    has_active_adm = (await db.execute(active_adm_stmt)).scalars().first() is not None
+    if has_active_adm:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete patient with an active hospital admission."
+        )
+
+    # Safe to delete unadmitted / cancelled patient: clean up any empty/cancelled admissions first
+    adm_stmt = select(models.Admission).where(models.Admission.patient_id == patient_id)
+    admissions = (await db.execute(adm_stmt)).scalars().all()
+    for adm in admissions:
+        na_stmt = select(models.PatientNurseAssignment).where(models.PatientNurseAssignment.admission_id == adm.admission_id)
+        nas = (await db.execute(na_stmt)).scalars().all()
+        for na in nas:
+            await db.delete(na)
+        await db.delete(adm)
+
+    await db.delete(patient)
+    await db.commit()
+
+    user_id = current_user.get("user_id") or 0
+    await log_audit(
+        db=db,
+        action="DELETE_UNADMITTED_PATIENT",
+        user_id=user_id,
+        resource_type="patient",
+        resource_id=patient_id,
+        details={"patient_name": f"{patient.first_name} {patient.last_name}"}
+    )
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Unadmitted patient #{patient_id} ({patient.first_name} {patient.last_name}) removed successfully."
+    }

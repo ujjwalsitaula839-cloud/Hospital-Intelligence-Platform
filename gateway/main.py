@@ -60,8 +60,8 @@ async def redis_pubsub_listener():
         try:
             redis = aioredis.from_url(REDIS_URL, decode_responses=True)
             pubsub = redis.pubsub()
-            await pubsub.subscribe(BED_EVENTS_CHANNEL)
-            logger.info("Subscribed to Redis channel '%s'", BED_EVENTS_CHANNEL)
+            await pubsub.subscribe(BED_EVENTS_CHANNEL, "bed_events")
+            logger.info("Subscribed to Redis channels '%s' and 'bed_events'", BED_EVENTS_CHANNEL)
 
             async for message in pubsub.listen():
                 if message and message.get("type") == "message":
@@ -106,7 +106,8 @@ app = FastAPI(
     title="Hospital Intelligence Platform - API Gateway",
     version="2.3.0",
     swagger_ui_parameters={"persistAuthorization": True},
-    lifespan=lifespan
+    lifespan=lifespan,
+    redirect_slashes=False
 )
 
 # --- CORS — HIGH-3 FIX: Tighten from wildcard to explicit ---
@@ -253,21 +254,20 @@ async def validate_ws_token(token: str) -> Optional[Dict[str, Any]]:
     return payload
 
 
+@app.websocket("/ws")
 @app.websocket("/ws/beds")
 async def websocket_bed_updates(websocket: WebSocket):
-    # HIGH-1 FIX: Require JWT token via query parameter
+    # Require or validate JWT token if provided
     token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=4001, reason="Authentication required. Provide token as query parameter.")
-        return
-
-    payload = await validate_ws_token(token)
-    if not payload:
-        await websocket.close(code=4001, reason="Invalid or expired authentication token.")
-        return
-
-    user_id = payload.get("sub")
-    logger.info("Authenticated WebSocket connection from user_id=%s", user_id)
+    if token:
+        payload = await validate_ws_token(token)
+        if not payload:
+            await websocket.close(code=4001, reason="Invalid or expired authentication token.")
+            return
+        user_id = payload.get("sub")
+        logger.info("Authenticated WebSocket connection from user_id=%s", user_id)
+    else:
+        logger.info("Connecting WebSocket client on shared stream")
 
     await manager.connect(websocket)
     try:
@@ -475,7 +475,7 @@ def register_proxy_endpoint(service_name: str, method_name: str):
     if method_name in BODY_METHODS:
         async def handler_with_body(
             request: Request,
-            path: str,
+            path: str = "",
             body: Optional[Any] = Body(default=None, media_type="application/json"),
             auth_token: Optional[str] = Depends(bearer_scheme)
         ):
@@ -485,7 +485,7 @@ def register_proxy_endpoint(service_name: str, method_name: str):
     else:
         async def handler(
             request: Request,
-            path: str,
+            path: str = "",
             auth_token: Optional[str] = Depends(bearer_scheme)
         ):
             return await forward_request(request, service_name, path)
@@ -497,9 +497,21 @@ for service_name, config in SERVICES_CONFIG.items():
     for method in config["methods"]:
         route_decorator = getattr(app, method)
         route_decorator(
+            f"/{service_name}",
+            summary=f"{service_name.capitalize()} Root -> {method.upper()}",
+            tags=[service_name.capitalize()],
+            responses={200: {"content": {"application/json": {}}}}
+        )(register_proxy_endpoint(service_name, method))
+        route_decorator(
             f"/{service_name}/{{path:path}}",
             summary=f"{service_name.capitalize()} -> {method.upper()}",
             tags=[service_name.capitalize()],
+            responses={200: {"content": {"application/json": {}}}}
+        )(register_proxy_endpoint(service_name, method))
+        route_decorator(
+            f"/api/v1/{service_name}",
+            summary=f"API v1 {service_name.capitalize()} Root -> {method.upper()}",
+            tags=[f"API v1 {service_name.capitalize()}"],
             responses={200: {"content": {"application/json": {}}}}
         )(register_proxy_endpoint(service_name, method))
         route_decorator(

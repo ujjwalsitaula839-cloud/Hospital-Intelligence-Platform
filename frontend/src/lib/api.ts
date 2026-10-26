@@ -84,7 +84,7 @@ async function doRefreshToken(): Promise<string | null> {
 }
 
 async function request<T>(path: string, options: RequestInit = {}, isRetry = false): Promise<T> {
-  const token = sessionStorage.getItem('token');
+  const token = sessionStorage.getItem('token') || localStorage.getItem('hip_access_token') || localStorage.getItem('token');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...((options.headers as Record<string, string>) || {}),
@@ -199,6 +199,22 @@ export const api = {
     return res.beds;
   },
 
+  createBed: (data: {
+    bed_code: string;
+    department: string;
+    room_number?: string;
+    bed_type?: string;
+  }): Promise<Bed> =>
+    request<Bed>('/beds/create', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  cancelBedHold: (bedCode: string): Promise<{ status: string; message: string }> =>
+    request<{ status: string; message: string }>(`/beds/cancel-hold/${bedCode}`, {
+      method: 'PUT',
+    }),
+
   updateBedStatus: (
     bedCode: string,
     status: BedStatus,
@@ -243,6 +259,8 @@ export const api = {
     primary_diagnosis?: string;
     acuity_level?: AcuityLevel;
     notes?: string;
+    bed_code?: string;
+    bed_id?: number;
   }): Promise<Admission> =>
     request<Admission>('/patients/admissions/create', {
       method: 'POST',
@@ -250,8 +268,8 @@ export const api = {
     }),
 
   dischargeAdmission: (admissionId: number): Promise<{ status: string; message: string }> =>
-    request<{ status: string; message: string }>(`/patients/admissions/discharge/${admissionId}`, {
-      method: 'PUT',
+    request<{ status: string; message: string }>(`/patients/admissions/${admissionId}/discharge`, {
+      method: 'POST',
     }),
 
   assignNurse: (admissionId: number, nurseId: number): Promise<{ assignment_id: number }> =>

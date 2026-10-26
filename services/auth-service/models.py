@@ -21,6 +21,10 @@ class Personnel(Base):
     reset_token_hash = Column(String(255), nullable=True, index=True)
     reset_token_expires_at = Column(DateTime(timezone=True), nullable=True)
     token_version = Column(Integer, default=1, nullable=False, server_default="1")
+    deactivation_reason = Column(String(100), nullable=True)
+    deactivation_notes = Column(Text, nullable=True)
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
+    deactivated_by = Column(String(100), nullable=True)
 
 
 class PasswordHistory(Base):

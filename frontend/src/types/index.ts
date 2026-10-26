@@ -61,6 +61,7 @@ export interface Bed {
   acuity_level?: AcuityLevel | null;
   primary_diagnosis?: string | null;
   equipment?: string[];
+  floor_number?: number;
   update_datetime?: string | null;
   updated_at?: string | null;
 }
