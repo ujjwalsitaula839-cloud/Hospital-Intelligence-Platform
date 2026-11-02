@@ -99,6 +99,19 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  forgotPassword: (email: string): Promise<{ message: string; status?: string }> =>
+    request<{ message: string; status?: string }>('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  resetPassword: (payload: { token: string; new_password: string; confirm_password?: string }): Promise<{ message: string; status?: string }> =>
+    request<{ message: string; status?: string }>('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+
   logout: async (): Promise<void> => {
     try {
       await request<void>('/auth/logout', { method: 'POST' });

@@ -5,6 +5,7 @@ import { api } from '../../lib/api';
 import type { Bed, BedStatus, Department, Role } from '../../types';
 import Clinical from './Clinical';
 import Housekeeping from './Housekeeping';
+import ThemeToggle from '../../components/navigation/ThemeToggle';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -392,6 +393,9 @@ export default function Admin(): React.ReactElement {
           </div>
 
           <div className="pt-4 border-t border-zinc-800">
+            <div className="mb-2">
+              <ThemeToggle className="w-full justify-start" showLabel={true} />
+            </div>
             <button
               onClick={handleLogout}
               className="w-full border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-white py-2 text-xs font-mono tracking-wider transition-colors"
@@ -452,6 +456,9 @@ export default function Admin(): React.ReactElement {
           </div>
 
           <div className="pt-4 border-t border-zinc-800">
+            <div className="mb-2">
+              <ThemeToggle className="w-full justify-start" showLabel={true} />
+            </div>
             <button
               onClick={handleLogout}
               className="w-full border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-white py-2 text-xs font-mono tracking-wider transition-colors"
@@ -526,7 +533,10 @@ export default function Admin(): React.ReactElement {
         </div>
 
         <div className="pt-4 border-t border-zinc-800">
-          <button
+          <div className="mb-2">
+              <ThemeToggle className="w-full justify-start" showLabel={true} />
+            </div>
+            <button
             onClick={handleLogout}
             className="w-full border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-white py-2 text-xs font-mono tracking-wider transition-colors"
           >

@@ -15,6 +15,9 @@ import type {
   PatientCreateInput,
   PatientUpdateInput,
 } from '../../types';
+import EmsIntakeForm from '../../components/ems/EmsIntakeForm';
+import EmsCallIntakeModal from '../../components/ems/EmsCallIntakeModal';
+import ThemeToggle from '../../components/navigation/ThemeToggle';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -41,7 +44,15 @@ export default function Clinical(): React.ReactElement {
   const navigate = useNavigate();
 
   // Active module navigation
-  const [activeTab, setActiveTab] = useState<'beds' | 'patients' | 'vitals' | 'equipment'>('beds');
+  const [activeTab, setActiveTab] = useState<'beds' | 'patients' | 'vitals' | 'equipment' | 'ems'>('beds');
+  const [isEmsModalOpen, setIsEmsModalOpen] = useState(false);
+  const [recentEmsRuns, setRecentEmsRuns] = useState<{
+    id: string;
+    patient: Patient;
+    admission: Admission;
+    bedCode?: string;
+    timestamp: string;
+  }[]>([]);
 
   // Beds state
   const [beds, setBeds] = useState<Bed[]>([]);
@@ -207,6 +218,9 @@ export default function Clinical(): React.ReactElement {
       fetchEquipment();
     } else if (activeTab === 'vitals') {
       fetchBeds();
+    } else if (activeTab === 'ems') {
+      fetchBeds();
+      fetchPatients();
     }
   }, [activeTab]);
 
@@ -760,6 +774,111 @@ interface LiveEventNotification {
     (b) => b.status === 'AVAILABLE' && b.bed_code !== transferFromBed?.bed_code
   );
 
+  // EMS Call Intake Success Handler
+  const handleEmsSuccess = (result: {
+    patient: Patient;
+    admission: Admission;
+  }) => {
+    const newRun = {
+      id: `${result.patient.patient_id}-${result.admission.admission_id}`,
+      patient: result.patient,
+      admission: result.admission,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+    setRecentEmsRuns((prev) => [newRun, ...prev.filter((r) => r.patient.patient_id !== result.patient.patient_id)]);
+    fetchPatients();
+    fetchBeds();
+  };
+
+  // Cancel EMS Inbound Hold and remove patient
+  const handleCancelHold = async (item: {
+    id: string;
+    patient: Patient;
+    admission: Admission;
+    bedCode?: string;
+  }) => {
+    try {
+      if (item.admission?.admission_id) {
+        try {
+          await api.dischargeAdmission(item.admission.admission_id);
+        } catch {
+          // Ignore if already discharged
+        }
+      }
+      if (item.patient?.patient_id) {
+        try {
+          await api.deactivatePatient(item.patient.patient_id);
+        } catch {
+          // Fallback
+        }
+      }
+      setRecentEmsRuns((prev) => prev.filter((r) => r.patient.patient_id !== item.patient.patient_id));
+      const toastId = `${Date.now()}`;
+      setNotifications((prev) => [
+        {
+          id: toastId,
+          eventType: 'HOLD_CANCELLED',
+          title: 'EMS Inbound Hold Cancelled',
+          message: `Inbound hold for ${item.patient.first_name} ${item.patient.last_name} was cancelled and record removed.`,
+          actor: claims?.full_name || claims?.username || 'Staff',
+          bedCode: item.bedCode,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+        ...prev.slice(0, 4),
+      ]);
+      await fetchPatients();
+      await fetchBeds({ silent: true });
+    } catch (err: unknown) {
+      console.error('Failed to cancel EMS hold:', err);
+    }
+  };
+
+  // Aggregated EMS Inbound Patients & Admissions Worklist
+  const emsPatientsList = useMemo(() => {
+    const recentPatientIds = new Set(recentEmsRuns.map((r) => r.patient.patient_id));
+    const autoDetected = patients.filter(
+      (p) =>
+        p.is_active !== false &&
+        !recentPatientIds.has(p.patient_id) &&
+        (p.last_name.toUpperCase().includes('EMS') ||
+          p.last_name.toUpperCase().includes('UNKNOWN') ||
+          p.first_name.toUpperCase().includes('UNKNOWN'))
+    );
+    return [
+      ...recentEmsRuns
+        .filter((r) => r.patient.is_active !== false)
+        .map((r) => {
+          const latestPatient = patients.find((p) => p.patient_id === r.patient.patient_id) || r.patient;
+          const matchingBed = beds.find((b) => b.admission_id === r.admission.admission_id);
+          return {
+            id: r.id,
+            patient: latestPatient,
+            admission: r.admission,
+            bedCode: matchingBed?.bed_code,
+            bedStatus: matchingBed?.status,
+            timestamp: r.timestamp,
+          };
+        }),
+      ...autoDetected.map((p) => {
+        const matchingBed = beds.find((b) => b.patient_id === p.patient_id);
+        return {
+          id: `p-${p.patient_id}`,
+          patient: p,
+          admission: {
+            admission_id: matchingBed?.admission_id || p.patient_id,
+            patient_id: p.patient_id,
+            arrival_datetime: p.create_datetime || new Date().toISOString(),
+            acuity_level: (matchingBed?.acuity_level || 'ESI_3') as AcuityLevel,
+            primary_diagnosis: matchingBed?.primary_diagnosis || 'EMS Inbound Radio Report',
+          } as Admission,
+          bedCode: matchingBed?.bed_code,
+          bedStatus: matchingBed?.status,
+          timestamp: 'Recorded Record',
+        };
+      }),
+    ];
+  }, [recentEmsRuns, patients, beds]);
+
   const displayedBeds = beds.filter((b) => {
     const matchesDept = bedDeptFilter === 'ALL' || b.department.toUpperCase() === bedDeptFilter.toUpperCase();
     const matchesStatus =
@@ -849,6 +968,16 @@ interface LiveEventNotification {
           </div>
 
           <div className="flex items-center space-x-3">
+            {/* Quick EMS Radio Intake Modal Trigger */}
+            <button
+              onClick={() => setIsEmsModalOpen(true)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-red-950/80 hover:bg-red-900 border border-red-700 text-red-200 font-mono text-xs font-bold tracking-wider rounded-xs transition-all shadow-sm hover:shadow-red-900/40"
+              title="Open EMS Radio Call Intake Form"
+            >
+              <span className="text-sm animate-pulse">📞</span>
+              <span>EMS Call Intake</span>
+            </button>
+
             {/* Live Telemetry status */}
             <div className="flex items-center space-x-2 px-2.5 py-1 bg-zinc-950 border border-zinc-800 rounded-xs">
               <span className={`inline-block h-2 w-2 rounded-full ${wsConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
@@ -856,6 +985,8 @@ interface LiveEventNotification {
                 {wsConnected ? 'LIVE SYNC' : 'RECONNECTING'}
               </span>
             </div>
+
+            <ThemeToggle />
 
             <button
               onClick={handleLogout}
@@ -924,6 +1055,22 @@ interface LiveEventNotification {
             <span className="text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded-xs text-zinc-400">
               {equipmentList.length}
             </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('ems')}
+            className={`py-3 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 ${
+              activeTab === 'ems'
+                ? 'border-white text-white font-bold'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <span>🚑 EMS Inbound Intake</span>
+            {emsPatientsList.length > 0 && (
+              <span className="text-[10px] bg-red-950 border border-red-800 text-red-300 px-1.5 py-0.5 rounded-xs font-bold">
+                {emsPatientsList.length}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -1853,6 +2000,135 @@ interface LiveEventNotification {
                     </div>
                   );
                 })
+              )}
+            </div>
+          </div>
+        )}
+        {/* ================================================================= */}
+        {/* MODULE 5: EMS INBOUND CALL & RADIO PATCH INTAKE */}
+        {/* ================================================================= */}
+        {activeTab === 'ems' && (
+          <div className="space-y-8 animate-fadeIn">
+            {/* Embedded Form Component */}
+            <EmsIntakeForm onSuccess={handleEmsSuccess} />
+
+            {/* Inbound & Recent EMS Patients Worklist */}
+            <div className="bg-zinc-900/60 border border-zinc-800 p-6 rounded-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-zinc-800">
+                <div>
+                  <h3 className="text-base font-semibold text-white tracking-normal flex items-center space-x-2">
+                    <span>📋</span>
+                    <span>Inbound & Recent EMS Patients Worklist</span>
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Patients logged via ambulance calls. When the patient arrives, update their legal identity or chart arrival vitals. You can also cancel the hold if diversion occurs.
+                  </p>
+                </div>
+                <div className="text-xs font-mono text-zinc-400 bg-zinc-950 px-3 py-1.5 border border-zinc-800 rounded-lg">
+                  Total Tracked: <span className="font-bold text-white">{emsPatientsList.length}</span>
+                </div>
+              </div>
+
+              {emsPatientsList.length === 0 ? (
+                <div className="p-8 text-center text-zinc-500 border border-dashed border-zinc-800 rounded-xl">
+                  No active inbound EMS calls logged yet. Fill out the form above or click "Unknown Male / Female" to register an incoming patient.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {emsPatientsList.map((item) => {
+                    const isEsi1 = item.admission.acuity_level === 'ESI_1';
+                    const isEsi2 = item.admission.acuity_level === 'ESI_2';
+                    const acuityClass = isEsi1
+                      ? 'bg-red-950 border-red-700 text-red-300 animate-pulse'
+                      : isEsi2
+                      ? 'bg-orange-950 border-orange-700 text-orange-300'
+                      : 'bg-yellow-950 border-yellow-700 text-yellow-300';
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="bg-zinc-950 border border-zinc-800/90 hover:border-zinc-700 p-4 rounded-xl flex flex-col justify-between space-y-3.5 shadow-md transition-all"
+                      >
+                        <div className="space-y-2.5">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <span className="text-[11px] text-zinc-500 uppercase block font-medium">
+                                MRN #{item.patient.patient_id}
+                              </span>
+                              <h4 className="text-sm font-semibold text-white truncate max-w-[200px]">
+                                {item.patient.first_name} {item.patient.last_name}
+                              </h4>
+                            </div>
+                            <span
+                              className={`text-[11px] font-semibold px-2.5 py-0.5 border rounded-md ${acuityClass}`}
+                            >
+                              {item.admission.acuity_level}
+                            </span>
+                          </div>
+
+                          <div className="text-xs text-zinc-400 space-y-1">
+                            <div>
+                              <span className="text-zinc-500">Demographics: </span>
+                              <span className="text-zinc-200">
+                                {item.patient.gender} · DOB: {item.patient.date_of_birth}
+                              </span>
+                            </div>
+                            {item.admission.primary_diagnosis && (
+                              <div className="truncate">
+                                <span className="text-zinc-500">Complaint: </span>
+                                <span className="text-zinc-200">
+                                  {item.admission.primary_diagnosis}
+                                </span>
+                              </div>
+                            )}
+                            {item.admission.notes && (
+                              <div className="text-[11px] text-zinc-400 truncate">
+                                <span className="text-zinc-500">Telemetry: </span>
+                                <span>{item.admission.notes}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Post-Arrival & Hold Action Buttons */}
+                        <div className="pt-2.5 border-t border-zinc-800/80 flex flex-wrap gap-2">
+                          {/* 1. Update Identity / Patient Arrived */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditPatient(item.patient)}
+                            className="flex-1 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-xs font-medium rounded-lg transition-colors text-center"
+                            title="Edit patient legal name, exact DOB, phone, address once arrived"
+                          >
+                            ✏️ Update Identity
+                          </button>
+
+                          {/* 2. Chart Arrival Vitals */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setChartingAdmissionId(item.admission.admission_id);
+                              setChartingBedCode(item.bedCode || null);
+                            }}
+                            className="flex-1 px-3 py-1.5 bg-cyan-950/50 hover:bg-cyan-900/60 border border-cyan-800/60 text-cyan-200 text-xs font-medium rounded-lg transition-colors text-center"
+                            title="Record arrival observation vitals for this admission"
+                          >
+                            🩺 Chart Vitals
+                          </button>
+
+                          {/* 3. Cancel Hold (Removes Patient) */}
+                          <button
+                            type="button"
+                            onClick={() => handleCancelHold(item)}
+                            className="px-2.5 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300 hover:text-rose-100 text-xs font-medium rounded-lg transition-colors text-center"
+                            title="Cancel this inbound hold and remove the patient"
+                          >
+                            ✕ Cancel Hold
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </div>
@@ -2907,6 +3183,15 @@ interface LiveEventNotification {
           </div>
         </div>
       )}
+
+      {/* ================================================================= */}
+      {/* MODAL: EMS RADIO PATCH & INBOUND CALL INTAKE (ACCESSIBLE ANYWHERE) */}
+      {/* ================================================================= */}
+      <EmsCallIntakeModal
+        isOpen={isEmsModalOpen}
+        onClose={() => setIsEmsModalOpen(false)}
+        onSuccess={handleEmsSuccess}
+      />
     </div>
   );
 }

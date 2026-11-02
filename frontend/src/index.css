@@ -4,4 +4,815 @@
 @theme {
   --font-display: "Playfair Display", Georgia, serif;
   --font-body: Inter, system-ui, -apple-system, sans-serif;
+
+  --color-theme-app: var(--bg-app);
+  --color-theme-surface: var(--bg-surface);
+  --color-theme-card: var(--bg-card);
+  --color-theme-sidebar: var(--bg-sidebar);
+  --color-theme-input: var(--bg-input);
+  --color-theme-border: var(--border-primary);
+  --color-theme-border-secondary: var(--border-secondary);
+  --color-theme-text-primary: var(--text-primary);
+  --color-theme-text-secondary: var(--text-secondary);
+  --color-theme-text-muted: var(--text-muted);
 }
+
+/* ==========================================================================
+   CSS CUSTOM PROPERTY TOKENS (LIGHT & DARK THEMES)
+   ========================================================================== */
+
+:root {
+  /* Main application background */
+  --bg-app: #f8fafc; /* Slate 50 */
+  --bg-surface: #ffffff;
+  --bg-secondary: #ffffff;
+  
+  /* Sidebar and navigation background */
+  --bg-sidebar: #ffffff;
+  --bg-nav: rgba(255, 255, 255, 0.95);
+  
+  /* Card and panel backgrounds */
+  --bg-card: #ffffff;
+  --bg-card-elevated: #f1f5f9; /* Slate 100 */
+  --bg-card-muted: #f8fafc;
+  
+  /* Primary, secondary, and descriptive text */
+  --text-primary: #0f172a; /* Slate 900 */
+  --text-secondary: #1e293b; /* Slate 800 */
+  --text-muted: #334155; /* Slate 700 - high contrast, never washed out */
+  --text-subtle: #475569; /* Slate 600 - minimum 5:1 contrast on white */
+  
+  /* Buttons */
+  --btn-primary-bg: #0f172a;
+  --btn-primary-text: #ffffff;
+  --btn-primary-hover: #1e293b;
+  --btn-primary-active: #020617;
+  
+  --btn-secondary-bg: #ffffff;
+  --btn-secondary-text: #0f172a;
+  --btn-secondary-border: #cbd5e1;
+  --btn-secondary-hover: #f1f5f9;
+  --btn-secondary-active: #e2e8f0;
+
+  --btn-disabled-bg: #f1f5f9;
+  --btn-disabled-text: #64748b;
+  --btn-disabled-border: #cbd5e1;
+  
+  /* Inputs & Forms */
+  --bg-input: #ffffff;
+  --border-input: #cbd5e1;
+  --placeholder-input: #64748b;
+  --border-focus: #2563eb;
+  --ring-focus: rgba(37, 99, 235, 0.2);
+  
+  /* Tables */
+  --table-bg: #ffffff;
+  --table-header-bg: #f1f5f9;
+  --table-header-text: #0f172a;
+  --table-border: #e2e8f0;
+  --table-row-hover: #f8fafc;
+  
+  /* Modals & Dropdowns */
+  --modal-bg: #ffffff;
+  --modal-backdrop: rgba(15, 23, 42, 0.5);
+  --dropdown-bg: #ffffff;
+  --dropdown-border: #cbd5e1;
+  --notification-bg: #ffffff;
+  
+  /* Dividers & General Borders */
+  --border-primary: #e2e8f0;
+  --border-secondary: #cbd5e1;
+  --divider: #e2e8f0;
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.07);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.08);
+  --shadow-modal: 0 20px 25px -5px rgb(0 0 0 / 0.12), 0 8px 10px -6px rgb(0 0 0 / 0.12);
+  
+  /* Links & Interactive */
+  --link-color: #0284c7;
+  --link-hover: #0369a1;
+
+  /* Hospital Bed Status Tokens (High Contrast Healthcare Colors) */
+  --status-available-bg: #ecfdf5;
+  --status-available-border: #6ee7b7;
+  --status-available-text: #065f46;
+  
+  --status-occupied-bg: #eff6ff;
+  --status-occupied-border: #93c5fd;
+  --status-occupied-text: #1e40af;
+  
+  --status-reserved-bg: #fefce8;
+  --status-reserved-border: #fde047;
+  --status-reserved-text: #854d0e;
+  
+  --status-dirty-bg: #fef2f2;
+  --status-dirty-border: #fca5a5;
+  --status-dirty-text: #991b1b;
+  
+  --status-cleaning-bg: #faf5ff;
+  --status-cleaning-border: #d8b4fe;
+  --status-cleaning-text: #6b21a8;
+}
+
+.dark {
+  /* Main application background */
+  --bg-app: #09090b; /* Zinc 950 */
+  --bg-surface: #18181b; /* Zinc 900 */
+  --bg-secondary: #18181b;
+  
+  /* Sidebar and navigation background */
+  --bg-sidebar: #18181b;
+  --bg-nav: rgba(24, 24, 27, 0.85);
+  
+  /* Card and panel backgrounds */
+  --bg-card: #18181b;
+  --bg-card-elevated: #27272a;
+  --bg-card-muted: #121215;
+  
+  /* Primary and secondary text */
+  --text-primary: #f4f4f5; /* Zinc 100 */
+  --text-secondary: #d4d4d8; /* Zinc 300 */
+  --text-muted: #a1a1aa; /* Zinc 400 */
+  --text-subtle: #71717a; /* Zinc 500 */
+  
+  /* Buttons */
+  --btn-primary-bg: #f4f4f5;
+  --btn-primary-text: #09090b;
+  --btn-primary-hover: #e4e4e7;
+  --btn-primary-active: #d4d4d8;
+  
+  --btn-secondary-bg: #27272a;
+  --btn-secondary-text: #f4f4f5;
+  --btn-secondary-border: #3f3f46;
+  --btn-secondary-hover: #3f3f46;
+  --btn-secondary-active: #52525b;
+
+  --btn-disabled-bg: #27272a;
+  --btn-disabled-text: #71717a;
+  --btn-disabled-border: #3f3f46;
+  
+  /* Inputs & Forms */
+  --bg-input: #09090b;
+  --border-input: #27272a;
+  --placeholder-input: #52525b;
+  --border-focus: #38bdf8;
+  --ring-focus: rgba(56, 189, 248, 0.2);
+  
+  /* Tables */
+  --table-bg: #18181b;
+  --table-header-bg: #121215;
+  --table-header-text: #a1a1aa;
+  --table-border: #27272a;
+  --table-row-hover: #27272a;
+  
+  /* Modals & Dropdowns */
+  --modal-bg: #18181b;
+  --modal-backdrop: rgba(0, 0, 0, 0.8);
+  --dropdown-bg: #18181b;
+  --dropdown-border: #27272a;
+  --notification-bg: #18181b;
+  
+  /* Dividers & General Borders */
+  --border-primary: #27272a;
+  --border-secondary: #3f3f46;
+  --divider: #27272a;
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.5);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
+  --shadow-modal: 0 20px 25px -5px rgb(0 0 0 / 0.7);
+  
+  /* Links & Interactive */
+  --link-color: #38bdf8;
+  --link-hover: #7dd3fc;
+
+  /* Hospital Bed Status Tokens (Semantic) */
+  --status-available-bg: rgba(6, 78, 59, 0.35);
+  --status-available-border: #065f46;
+  --status-available-text: #6ee7b7;
+  
+  --status-occupied-bg: rgba(30, 58, 138, 0.35);
+  --status-occupied-border: #1e40af;
+  --status-occupied-text: #93c5fd;
+  
+  --status-reserved-bg: rgba(113, 63, 18, 0.35);
+  --status-reserved-border: #854d0e;
+  --status-reserved-text: #fde047;
+  
+  --status-dirty-bg: rgba(127, 29, 29, 0.45);
+  --status-dirty-border: #991b1b;
+  --status-dirty-text: #fca5a5;
+  
+  --status-cleaning-bg: rgba(88, 28, 135, 0.35);
+  --status-cleaning-border: #6b21a8;
+  --status-cleaning-text: #d8b4fe;
+}
+
+/* ==========================================================================
+   SMOOTH THEME TRANSITION
+   Subtle 250ms transition on theme-dependent visual properties.
+   Layout properties (dimensions, margins, paddings, positions) are NOT animated.
+   Respects prefers-reduced-motion.
+   ========================================================================== */
+
+.theme-transition,
+.theme-transition *,
+.theme-transition *::before,
+.theme-transition *::after {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+  transition-duration: 250ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-transition,
+  .theme-transition *,
+  .theme-transition *::before,
+  .theme-transition *::after {
+    transition: none !important;
+  }
+}
+
+/* Base Body Application Styling */
+body {
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  min-height: 100vh;
+}
+
+/* ==========================================================================
+   LIGHT MODE ADAPTATIONS (When html does NOT have .dark class)
+   Ensures ALL text, surfaces, cards, tables, badges, and inputs are crisp and dark.
+   ========================================================================== */
+
+html:not(.dark) {
+  color-scheme: light;
+}
+
+/* 1. Surfaces & Canvas Backgrounds */
+html:not(.dark) body,
+html:not(.dark) .min-h-screen,
+html:not(.dark) [class*="bg-zinc-950"]:not([class*="bg-zinc-950/"]) {
+  background-color: var(--bg-app);
+}
+
+/* Cards, sidebars, headers, panel boxes */
+html:not(.dark) [class*="bg-zinc-900"]:not([class*="bg-zinc-900/"]),
+html:not(.dark) [class*="bg-zinc-900/"],
+html:not(.dark) [class*="bg-zinc-950/"] {
+  background-color: var(--bg-card) !important;
+}
+
+/* Elevated secondary surfaces */
+html:not(.dark) [class*="bg-zinc-800"]:not([class*="bg-zinc-800/"]),
+html:not(.dark) [class*="bg-zinc-800/"] {
+  background-color: var(--bg-card-elevated) !important;
+}
+
+/* 2. Text Colors (Strict Contrast - No Washed Out Text) */
+html:not(.dark) h1,
+html:not(.dark) h2,
+html:not(.dark) h3,
+html:not(.dark) h4,
+html:not(.dark) h5,
+html:not(.dark) h6 {
+  color: #0f172a !important;
+  font-weight: 700;
+}
+
+/* Primary text classes */
+html:not(.dark) [class*="text-zinc-100"],
+html:not(.dark) [class*="text-zinc-200"],
+html:not(.dark) [class*="text-zinc-300"] {
+  color: #0f172a !important;
+}
+
+/* Secondary & Muted text: MUST be deep slate for readability */
+html:not(.dark) [class*="text-zinc-400"] {
+  color: #334155 !important; /* Slate 700 (9.2:1 contrast) */
+}
+
+html:not(.dark) [class*="text-zinc-500"] {
+  color: #475569 !important; /* Slate 600 (5.8:1 contrast) */
+}
+
+html:not(.dark) [class*="text-zinc-600"] {
+  color: #64748b !important; /* Slate 500 (4.5:1 contrast) */
+}
+
+/* White text adaptation */
+html:not(.dark) .text-white:not(
+  button.bg-red-600, button.bg-red-700,
+  button.bg-emerald-600, button.bg-emerald-700,
+  button.bg-blue-600, button.bg-blue-700,
+  button.bg-slate-900, button.bg-zinc-950,
+  .btn-primary,
+  [data-keep-white="true"],
+  [data-keep-white="true"] *
+) {
+  color: #0f172a !important;
+}
+
+/* Buttons with solid colors retain white text */
+html:not(.dark) button.bg-red-600,
+html:not(.dark) button.bg-emerald-600,
+html:not(.dark) button.bg-blue-600,
+html:not(.dark) button.bg-slate-900,
+html:not(.dark) .bg-red-600 .text-white,
+html:not(.dark) .bg-emerald-600 .text-white,
+html:not(.dark) .bg-blue-600 .text-white {
+  color: #ffffff !important;
+}
+
+/* 3. Borders & Dividers */
+html:not(.dark) [class*="border-zinc-800"],
+html:not(.dark) [class*="border-zinc-800/"],
+html:not(.dark) [class*="divide-zinc-800"] > * {
+  border-color: #e2e8f0 !important;
+}
+
+html:not(.dark) [class*="border-zinc-700"],
+html:not(.dark) [class*="border-zinc-700/"],
+html:not(.dark) [class*="border-zinc-600"] {
+  border-color: #cbd5e1 !important;
+}
+
+/* Active indicator border-white should be dark in light mode */
+html:not(.dark) [class*="border-white"] {
+  border-color: #0f172a !important;
+}
+
+/* 4. Table Styling */
+html:not(.dark) table {
+  background-color: #ffffff !important;
+}
+
+html:not(.dark) table thead th,
+html:not(.dark) th {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  font-weight: 700 !important;
+  border-bottom: 2px solid #cbd5e1 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+html:not(.dark) table tbody td {
+  color: #0f172a !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+html:not(.dark) table tbody td span:not([class*="bg-"]) {
+  color: #1e293b !important;
+}
+
+html:not(.dark) table tbody tr:hover,
+html:not(.dark) [class*="hover:bg-zinc-800"]:hover,
+html:not(.dark) [class*="hover:bg-zinc-900"]:hover {
+  background-color: #f8fafc !important;
+}
+
+/* 5. Inputs & Form Fields */
+html:not(.dark) input:not([type="checkbox"]):not([type="radio"]),
+html:not(.dark) select,
+html:not(.dark) textarea {
+  background-color: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #0f172a !important;
+  font-weight: 500 !important;
+}
+
+html:not(.dark) input::placeholder,
+html:not(.dark) textarea::placeholder {
+  color: #64748b !important;
+}
+
+html:not(.dark) input:focus,
+html:not(.dark) select:focus,
+html:not(.dark) textarea:focus {
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important;
+}
+
+/* 6. Form Section Cards (EMS Intake, Patient Registration, etc.) */
+html:not(.dark) [class*="bg-zinc-950/50"],
+html:not(.dark) [class*="bg-zinc-950/60"],
+html:not(.dark) [class*="bg-zinc-950/70"],
+html:not(.dark) [class*="bg-zinc-950/80"],
+html:not(.dark) [class*="bg-zinc-950/90"] {
+  background-color: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+}
+
+html:not(.dark) label {
+  color: #0f172a !important;
+  font-weight: 600 !important;
+}
+
+/* Sub-labels in forms (e.g. 0 - 125, 20 - 240 bpm) */
+html:not(.dark) label + span,
+html:not(.dark) .flex > span[class*="text-zinc-400"] {
+  color: #334155 !important;
+  font-weight: 600 !important;
+}
+
+/* Badges inside section headers */
+html:not(.dark) span[class*="bg-zinc-800/"] {
+  background-color: #f1f5f9 !important;
+  color: #334155 !important;
+  border: 1px solid #cbd5e1 !important;
+  font-weight: 600 !important;
+}
+
+/* 7. Buttons & Interactive Elements */
+/* Primary Action Buttons */
+html:not(.dark) button.bg-white.text-zinc-950,
+html:not(.dark) a.bg-white.text-zinc-950 {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+}
+
+html:not(.dark) button.bg-white.text-zinc-950:hover,
+html:not(.dark) a.bg-white.text-zinc-950:hover {
+  background-color: #1e293b !important;
+}
+
+/* Secondary / Outline Buttons */
+html:not(.dark) button[class*="border-zinc-700"]:not(.bg-white):not([class*="bg-red"]):not([class*="bg-green"]),
+html:not(.dark) a[class*="border-zinc-700"]:not(.bg-white) {
+  border-color: #cbd5e1 !important;
+  color: #1e293b !important;
+  background-color: #ffffff !important;
+  font-weight: 600 !important;
+}
+
+html:not(.dark) button[class*="border-zinc-700"]:hover:not(.bg-white):not([class*="bg-red"]):not([class*="bg-green"]),
+html:not(.dark) a[class*="border-zinc-700"]:hover:not(.bg-white) {
+  border-color: #94a3b8 !important;
+  color: #0f172a !important;
+  background-color: #f1f5f9 !important;
+}
+
+/* When hover turns text white in JSX, keep it dark in light mode */
+html:not(.dark) button[class*="hover:text-white"]:hover:not(.bg-red-600):not(.bg-blue-600):not(.bg-slate-900),
+html:not(.dark) a[class*="hover:text-white"]:hover:not(.bg-red-600):not(.bg-blue-600):not(.bg-slate-900) {
+  color: #0f172a !important;
+}
+
+/* Action Buttons inside Tables */
+html:not(.dark) button[class*="bg-red-950"] {
+  background-color: #fef2f2 !important;
+  border-color: #fca5a5 !important;
+  color: #b91c1c !important;
+  font-weight: 600 !important;
+}
+
+html:not(.dark) button[class*="bg-red-950"]:hover {
+  background-color: #fee2e2 !important;
+  color: #7f1d1d !important;
+}
+
+html:not(.dark) button[class*="bg-green-950"] {
+  background-color: #f0fdf4 !important;
+  border-color: #86efac !important;
+  color: #15803d !important;
+  font-weight: 600 !important;
+}
+
+html:not(.dark) button[class*="bg-green-950"]:hover {
+  background-color: #dcfce7 !important;
+  color: #14532d !important;
+}
+
+/* View Chart Button */
+html:not(.dark) button.bg-zinc-800 {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+}
+
+html:not(.dark) button.bg-zinc-800:hover {
+  background-color: #1e293b !important;
+}
+
+/* Quick surrogate demographic buttons (Unknown Male / Unknown Female / Clear) */
+html:not(.dark) button.bg-zinc-800\/80,
+html:not(.dark) [class*="text-sky-300"].bg-sky-950 {
+  background-color: #eff6ff !important;
+  border: 1px solid #93c5fd !important;
+  color: #1e40af !important;
+  font-weight: 600 !important;
+}
+
+html:not(.dark) [class*="text-purple-300"].bg-purple-950 {
+  background-color: #faf5ff !important;
+  border: 1px solid #d8b4fe !important;
+  color: #6b21a8 !important;
+  font-weight: 600 !important;
+}
+
+/* 8. Administrative KPI Cards & Summary Blocks */
+html:not(.dark) .grid > div[class*="border-zinc-800"],
+html:not(.dark) .grid > div[class*="bg-zinc-900"] {
+  background-color: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* When Total Staff card is selected (staffStatusFilter === 'ALL') */
+html:not(.dark) .grid > div.bg-zinc-800\/80 {
+  background-color: #0f172a !important;
+  border-color: #0f172a !important;
+}
+
+html:not(.dark) .grid > div.bg-zinc-800\/80 * {
+  color: #ffffff !important;
+}
+
+html:not(.dark) .grid > div.bg-zinc-800\/80 .text-zinc-500 {
+  color: #cbd5e1 !important;
+}
+
+/* Active Personnel KPI Card */
+html:not(.dark) .grid > div.bg-green-950\/60 {
+  background-color: #ecfdf5 !important;
+  border: 2px solid #059669 !important;
+}
+
+html:not(.dark) .grid > div.bg-green-950\/60 * {
+  color: #065f46 !important;
+}
+
+/* Inactive Personnel KPI Card */
+html:not(.dark) .grid > div.bg-red-950\/60 {
+  background-color: #fef2f2 !important;
+  border: 2px solid #dc2626 !important;
+}
+
+html:not(.dark) .grid > div.bg-red-950\/60 * {
+  color: #991b1b !important;
+}
+
+/* Filter Buttons (ALL, ACTIVE, INACTIVE) */
+html:not(.dark) div.flex.bg-zinc-950.p-0\.5 {
+  background-color: #f1f5f9 !important;
+  border: 1px solid #cbd5e1 !important;
+}
+
+html:not(.dark) div.flex.bg-zinc-950.p-0\.5 button {
+  color: #334155 !important;
+  font-weight: 600 !important;
+}
+
+html:not(.dark) div.flex.bg-zinc-950.p-0\.5 button.bg-zinc-800 {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+}
+
+/* 9. Sidebar Navigation */
+html:not(.dark) aside {
+  background-color: #ffffff !important;
+  border-right: 1px solid #e2e8f0 !important;
+}
+
+html:not(.dark) aside nav button {
+  color: #334155 !important;
+  font-weight: 600 !important;
+}
+
+html:not(.dark) aside nav button:hover {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+html:not(.dark) aside nav button.bg-zinc-800,
+html:not(.dark) aside nav button[class*="border-white"] {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+  font-weight: 800 !important;
+  border-left: 3px solid #0f172a !important;
+}
+
+/* 10. Sub-Navigation Tabs (Clinical & Housekeeping) */
+html:not(.dark) [class*="bg-zinc-900/30"],
+html:not(.dark) [class*="bg-zinc-900/50"],
+html:not(.dark) [class*="bg-zinc-900/60"] {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+html:not(.dark) .flex.space-x-8 button,
+html:not(.dark) .max-w-7xl.mx-auto.flex.space-x-8 button {
+  color: #334155 !important;
+  font-weight: 600 !important;
+}
+
+html:not(.dark) .flex.space-x-8 button:hover,
+html:not(.dark) .max-w-7xl.mx-auto.flex.space-x-8 button:hover {
+  color: #0f172a !important;
+}
+
+html:not(.dark) .flex.space-x-8 button[class*="border-white"],
+html:not(.dark) .max-w-7xl.mx-auto.flex.space-x-8 button[class*="border-white"] {
+  color: #0f172a !important;
+  font-weight: 800 !important;
+  border-bottom: 3px solid #0f172a !important;
+}
+
+/* Count badge inside navigation tabs */
+html:not(.dark) .flex.space-x-8 button span[class*="bg-zinc-800"],
+html:not(.dark) .max-w-7xl.mx-auto.flex.space-x-8 button span[class*="bg-zinc-800"] {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+  font-weight: 700 !important;
+}
+
+/* 11. Hospital Clinical Bed Status & Semantic Badges */
+html:not(.dark) [class*="bg-emerald-950"],
+html:not(.dark) [class*="bg-green-950"]:not(button):not(.grid > div) {
+  background-color: var(--status-available-bg) !important;
+  border: 1px solid var(--status-available-border) !important;
+  color: var(--status-available-text) !important;
+  font-weight: 700 !important;
+}
+
+html:not(.dark) [class*="bg-blue-950"]:not(button):not(.grid > div) {
+  background-color: var(--status-occupied-bg) !important;
+  border: 1px solid var(--status-occupied-border) !important;
+  color: var(--status-occupied-text) !important;
+  font-weight: 700 !important;
+}
+
+html:not(.dark) [class*="bg-yellow-950"]:not(button),
+html:not(.dark) [class*="bg-amber-950"]:not(button) {
+  background-color: var(--status-reserved-bg) !important;
+  border: 1px solid var(--status-reserved-border) !important;
+  color: var(--status-reserved-text) !important;
+  font-weight: 700 !important;
+}
+
+html:not(.dark) [class*="bg-red-950"]:not(button):not(.grid > div) {
+  background-color: var(--status-dirty-bg) !important;
+  border: 1px solid var(--status-dirty-border) !important;
+  color: var(--status-dirty-text) !important;
+  font-weight: 700 !important;
+}
+
+html:not(.dark) [class*="bg-orange-950"]:not(button) {
+  background-color: #fff7ed !important;
+  border: 1px solid #fed7aa !important;
+  color: #9a3412 !important;
+  font-weight: 700 !important;
+}
+
+html:not(.dark) [class*="bg-purple-950"]:not(button) {
+  background-color: var(--status-cleaning-bg) !important;
+  border: 1px solid var(--status-cleaning-border) !important;
+  color: var(--status-cleaning-text) !important;
+  font-weight: 700 !important;
+}
+
+html:not(.dark) [class*="bg-sky-950"]:not(button) {
+  background-color: #f0f9ff !important;
+  border: 1px solid #bae6fd !important;
+  color: #0369a1 !important;
+  font-weight: 700 !important;
+}
+
+/* Semantic Status Text */
+html:not(.dark) [class*="text-green-300"],
+html:not(.dark) [class*="text-green-400"],
+html:not(.dark) [class*="text-emerald-300"],
+html:not(.dark) [class*="text-emerald-400"] {
+  color: #065f46 !important;
+  font-weight: 600;
+}
+
+html:not(.dark) [class*="text-blue-300"],
+html:not(.dark) [class*="text-blue-400"] {
+  color: #1e40af !important;
+  font-weight: 600;
+}
+
+html:not(.dark) [class*="text-yellow-300"],
+html:not(.dark) [class*="text-yellow-400"],
+html:not(.dark) [class*="text-amber-300"],
+html:not(.dark) [class*="text-amber-400"] {
+  color: #854d0e !important;
+  font-weight: 600;
+}
+
+html:not(.dark) [class*="text-red-300"],
+html:not(.dark) [class*="text-red-400"] {
+  color: #991b1b !important;
+  font-weight: 600;
+}
+
+html:not(.dark) [class*="text-orange-300"],
+html:not(.dark) [class*="text-orange-400"] {
+  color: #9a3412 !important;
+  font-weight: 600;
+}
+
+html:not(.dark) [class*="text-purple-300"],
+html:not(.dark) [class*="text-purple-400"] {
+  color: #6b21a8 !important;
+  font-weight: 600;
+}
+
+/* Status Indicator Dots */
+html:not(.dark) [class*="bg-green-400"],
+html:not(.dark) [class*="bg-green-500"] {
+  background-color: #059669 !important;
+}
+
+html:not(.dark) [class*="bg-red-400"],
+html:not(.dark) [class*="bg-red-500"] {
+  background-color: #dc2626 !important;
+}
+
+html:not(.dark) [class*="bg-amber-400"],
+html:not(.dark) [class*="bg-yellow-400"] {
+  background-color: #d97706 !important;
+}
+
+html:not(.dark) [class*="bg-blue-400"],
+html:not(.dark) [class*="bg-blue-500"] {
+  background-color: #2563eb !important;
+}
+
+/* 12. Modals & Dialog Drawers */
+html:not(.dark) .fixed.inset-0.bg-black\/80 {
+  background-color: var(--modal-backdrop) !important;
+}
+
+html:not(.dark) [role="dialog"],
+html:not(.dark) .relative.z-10.w-full[class*="bg-zinc-950"],
+html:not(.dark) .relative.z-10.w-full[class*="bg-zinc-900"] {
+  background-color: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  box-shadow: var(--shadow-modal) !important;
+}
+
+/* 13. Login & Auth Screens Background */
+html:not(.dark) div[style*="hospital_login_bg.jpg"] {
+  background-image: linear-gradient(to bottom, rgba(248, 250, 252, 0.88), rgba(241, 245, 249, 0.94)), url('/hospital_login_bg.jpg') !important;
+}
+
+/* Dedicated CSS Status Classes */
+.status-available {
+  background-color: var(--status-available-bg);
+  border: 1px solid var(--status-available-border);
+  color: var(--status-available-text);
+  font-weight: 700;
+}
+
+.status-occupied {
+  background-color: var(--status-occupied-bg);
+  border: 1px solid var(--status-occupied-border);
+  color: var(--status-occupied-text);
+  font-weight: 700;
+}
+
+.status-reserved {
+  background-color: var(--status-reserved-bg);
+  border: 1px solid var(--status-reserved-border);
+  color: var(--status-reserved-text);
+  font-weight: 700;
+}
+
+.status-dirty {
+  background-color: var(--status-dirty-bg);
+  border: 1px solid var(--status-dirty-border);
+  color: var(--status-dirty-text);
+  font-weight: 700;
+}
+
+.status-cleaning {
+  background-color: var(--status-cleaning-bg);
+  border: 1px solid var(--status-cleaning-border);
+  color: var(--status-cleaning-text);
+  font-weight: 700;
+}
+
+/* Utility Token Classes */
+.bg-theme-app { background-color: var(--bg-app); }
+.bg-theme-surface { background-color: var(--bg-surface); }
+.bg-theme-card { background-color: var(--bg-card); }
+.bg-theme-sidebar { background-color: var(--bg-sidebar); }
+.bg-theme-input { background-color: var(--bg-input); }
+.text-theme-primary { color: var(--text-primary); }
+.text-theme-secondary { color: var(--text-secondary); }
+.text-theme-muted { color: var(--text-muted); }
+.border-theme-primary { border-color: var(--border-primary); }
+.border-theme-secondary { border-color: var(--border-secondary); }
+.shadow-theme-sm { box-shadow: var(--shadow-sm); }
+.shadow-theme-md { box-shadow: var(--shadow-md); }
+.shadow-theme-lg { box-shadow: var(--shadow-lg); }
+.shadow-theme-modal { box-shadow: var(--shadow-modal); }

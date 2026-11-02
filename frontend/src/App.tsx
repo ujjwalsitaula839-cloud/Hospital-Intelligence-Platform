@@ -1,12 +1,15 @@
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
 import Admin from './pages/dashboards/Admin';
 import Clinical from './pages/dashboards/Clinical';
 import Housekeeping from './pages/dashboards/Housekeeping';
 import ForceReset from './pages/ForceReset';
+import ForgotPassword from './pages/ForgotPassword';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
+import ResetPassword from './pages/ResetPassword';
 import type { Role } from './types';
 
 function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode; allowedRoles?: Role[] }) {
@@ -21,38 +24,42 @@ function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode;
 
 export default function App(): React.ReactElement {
   return (
-    <AuthProvider>
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <Routes>
-          <Route path="/" element={<Landing />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/force-reset" element={<ForceReset />} />
-          <Route
-            path="/dashboard/admin"
-            element={
-              <ProtectedRoute allowedRoles={['ADMIN']}>
-                <Admin />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/dashboard/clinical"
-            element={
-              <ProtectedRoute allowedRoles={['DOCTOR', 'NURSE']}>
-                <Clinical />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/dashboard/housekeeping"
-            element={
-              <ProtectedRoute allowedRoles={['CLEANING_CREW']}>
-                <Housekeeping />
-              </ProtectedRoute>
-            }
-          />
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <Routes>
+            <Route path="/" element={<Landing />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/force-reset" element={<ForceReset />} />
+            <Route
+              path="/dashboard/admin"
+              element={
+                <ProtectedRoute allowedRoles={['ADMIN']}>
+                  <Admin />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/clinical"
+              element={
+                <ProtectedRoute allowedRoles={['DOCTOR', 'NURSE']}>
+                  <Clinical />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/housekeeping"
+              element={
+                <ProtectedRoute allowedRoles={['CLEANING_CREW']}>
+                  <Housekeeping />
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

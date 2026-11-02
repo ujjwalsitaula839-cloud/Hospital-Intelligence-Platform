@@ -1,5 +1,6 @@
+import ThemeToggle from '../components/navigation/ThemeToggle';
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import type { Role } from '../types';
 
@@ -69,10 +70,15 @@ export default function Login(): React.ReactElement {
     e.preventDefault();
     setError(null);
     setSaveSuccessMsg(null);
-    setLoading(true);
+    const trimmedEmail = username.trim().toLowerCase();
+    if (!trimmedEmail.endsWith('@hospital.org')) {
+      setError('Only @hospital.org institutional email addresses are permitted.');
+      setLoading(false);
+      return;
+    }
 
     try {
-      const claims = await login({ email: username.trim(), password });
+      const claims = await login({ email: trimmedEmail, password });
 
       // Handle remember me
       if (rememberMe) {
@@ -156,6 +162,9 @@ export default function Login(): React.ReactElement {
         backgroundAttachment: 'fixed',
       }}
     >
+      <div className="fixed top-4 right-4 z-50">
+        <ThemeToggle />
+      </div>
       {/* Subtle glowing ambient pulse in backdrop */}
       <div className="absolute inset-0 bg-radial from-cyan-950/20 via-transparent to-black/60 pointer-events-none" />
 
@@ -206,14 +215,14 @@ export default function Login(): React.ReactElement {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1.5">
-              Staff Username / Email
+              Staff Institutional Email
             </label>
             <input
-              type="text"
+              type="email"
               required
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="e.g. admin@hospital.org"
+              placeholder="e.g. dr_smith@hospital.org"
               className="w-full bg-zinc-950/90 border border-zinc-800 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-500 font-mono"
             />
           </div>
@@ -223,13 +232,21 @@ export default function Login(): React.ReactElement {
               <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300">
                 Password
               </label>
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="text-[10px] font-mono text-zinc-400 hover:text-zinc-200 uppercase tracking-wider"
-              >
-                {showPassword ? 'Hide ✕' : 'Show 👁'}
-              </button>
+              <div className="flex items-center gap-3">
+                <Link
+                  to="/forgot-password"
+                  className="text-[10px] font-mono text-sky-400 hover:text-sky-300 uppercase tracking-wider transition-colors"
+                >
+                  Forgot Password?
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="text-[10px] font-mono text-zinc-400 hover:text-zinc-200 uppercase tracking-wider"
+                >
+                  {showPassword ? 'Hide ✕' : 'Show 👁'}
+                </button>
+              </div>
             </div>
             <div className="relative">
               <input
