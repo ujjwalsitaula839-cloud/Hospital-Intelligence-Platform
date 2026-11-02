@@ -181,13 +181,15 @@ export interface EquipmentItem {
 }
 
 export interface PatientCreateInput {
-  first_name: string;
+  first_name?: string;
   middle_name?: string | null;
-  last_name: string;
-  date_of_birth: string;
+  last_name?: string;
+  date_of_birth?: string;
   gender: 'MALE' | 'FEMALE' | 'OTHER';
   phone?: string | null;
   address?: string | null;
+  name?: string;
+  age?: number;
 }
 
 export interface PatientUpdateInput {

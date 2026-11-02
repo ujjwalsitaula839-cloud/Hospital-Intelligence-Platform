@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
+import ThemeToggle from '../../components/navigation/ThemeToggle';
 import type { CleaningTask } from '../../types';
 
 function formatTimeSince(dateStr?: string | null): string {
@@ -150,6 +151,8 @@ export default function Housekeeping(): React.ReactElement {
               Staff: <span className="font-semibold text-white">{claims?.full_name || claims?.username || 'Staff'}</span>
             </span>
           </div>
+
+          <ThemeToggle />
 
           <button
             onClick={handleLogout}

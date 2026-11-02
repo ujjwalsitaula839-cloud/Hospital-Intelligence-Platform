@@ -1,3 +1,4 @@
+import ThemeToggle from '../components/navigation/ThemeToggle';
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -13,11 +14,17 @@ function getDashboardPath(role: Role): string {
 export default function ForceReset(): React.ReactElement {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const { refreshAuth } = useAuth();
+  const { refreshAuth, logout } = useAuth();
   const navigate = useNavigate();
+
+  const handleSignOut = async () => {
+    await logout();
+    navigate('/login');
+  };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -43,6 +50,9 @@ export default function ForceReset(): React.ReactElement {
       });
 
       sessionStorage.setItem('token', data.access_token);
+      if (data.refresh_token) {
+        sessionStorage.setItem('refresh_token', data.refresh_token);
+      }
       const updatedClaims = refreshAuth();
 
       const targetRole = updatedClaims?.role || data.role;
@@ -60,6 +70,9 @@ export default function ForceReset(): React.ReactElement {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
+      <div className="fixed top-4 right-4 z-50">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 p-8">
         {/* Security Gate Header */}
         <div className="mb-6">
@@ -84,11 +97,21 @@ export default function ForceReset(): React.ReactElement {
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-2">
-              New Password
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300">
+                New Password
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label="Toggle password visibility"
+                className="text-[10px] font-mono text-zinc-400 hover:text-zinc-200 uppercase tracking-wider"
+              >
+                {showPassword ? 'Hide ✕' : 'Show 👁'}
+              </button>
+            </div>
             <input
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               required
               minLength={8}
               value={newPassword}
@@ -103,7 +126,7 @@ export default function ForceReset(): React.ReactElement {
               Confirm New Password
             </label>
             <input
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               required
               minLength={8}
               value={confirmPassword}
@@ -122,12 +145,20 @@ export default function ForceReset(): React.ReactElement {
           </button>
         </form>
 
-        <div className="mt-8 pt-6 border-t border-zinc-800">
+        <div className="mt-8 pt-6 border-t border-zinc-800 flex items-center justify-between">
           <p className="text-xs text-zinc-500 font-mono">
-            Navigation is locked until mandatory credential renewal is completed.
+            Navigation is locked until completed.
           </p>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="text-xs font-mono text-zinc-400 hover:text-white underline transition-colors"
+          >
+            Sign Out
+          </button>
         </div>
       </div>
     </div>
   );
 }
+

@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import ThemeToggle from '../components/navigation/ThemeToggle';
 
 export default function Landing(): React.ReactElement {
   const navigate = useNavigate();
@@ -30,12 +31,15 @@ export default function Landing(): React.ReactElement {
             <a href="#contact" className="hover:text-white transition-colors">Contact</a>
           </nav>
 
-          <button
+          <div className="flex items-center space-x-3">
+            <ThemeToggle />
+            <button
             onClick={() => navigate('/login')}
             className="border border-zinc-700 hover:border-zinc-500 text-white text-sm px-4 py-2 font-medium"
           >
             Staff Sign In
           </button>
+          </div>
         </header>
 
         {/* Hero Headline & CTA */}
