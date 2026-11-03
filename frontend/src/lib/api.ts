@@ -35,8 +35,68 @@ export function decodeJwt(token: string): TokenClaims {
   return JSON.parse(jsonPayload) as TokenClaims;
 }
 
+let refreshPromise: Promise<string | null> | null = null;
+
+async function tryRefreshToken(): Promise<string | null> {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  const refreshToken = sessionStorage.getItem('refresh_token');
+  if (!refreshToken) {
+    return null;
+  }
+
+  refreshPromise = (async () => {
+    try {
+      const resp = await fetch(`${BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!resp.ok) {
+        sessionStorage.removeItem('token');
+        sessionStorage.removeItem('refresh_token');
+        window.dispatchEvent(new CustomEvent('hip:auth_expired'));
+        return null;
+      }
+      const data = (await resp.json()) as AuthTokens;
+      if (data.access_token) {
+        sessionStorage.setItem('token', data.access_token);
+        if (data.refresh_token) {
+          sessionStorage.setItem('refresh_token', data.refresh_token);
+        }
+        return data.access_token;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = sessionStorage.getItem('token');
+  let token = sessionStorage.getItem('token');
+
+  // Proactive silent refresh if token is within 30s of expiring
+  if (token && path !== '/auth/refresh' && path !== '/auth/login') {
+    try {
+      const decoded = decodeJwt(token);
+      if (decoded.exp && decoded.exp * 1000 - Date.now() < 30000) {
+        const refreshed = await tryRefreshToken();
+        if (refreshed) {
+          token = refreshed;
+        }
+      }
+    } catch {
+      // Non-blocking decode error
+    }
+  }
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...((options.headers as Record<string, string>) || {}),
@@ -64,7 +124,29 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
 
     if (response.status === 401) {
+      // Attempt reactive token refresh and retry once if refresh_token exists
+      if (path !== '/auth/refresh' && path !== '/auth/login') {
+        const refreshedToken = await tryRefreshToken();
+        if (refreshedToken) {
+          const retryHeaders = {
+            ...headers,
+            Authorization: `Bearer ${refreshedToken}`,
+          };
+          const retryResp = await fetch(`${BASE_URL}${path}`, {
+            ...options,
+            headers: retryHeaders,
+          });
+          if (retryResp.ok) {
+            if (retryResp.status === 204) {
+              return {} as T;
+            }
+            return retryResp.json() as Promise<T>;
+          }
+        }
+      }
       sessionStorage.removeItem('token');
+      sessionStorage.removeItem('refresh_token');
+      window.dispatchEvent(new CustomEvent('hip:auth_expired'));
       throw new Error(`401 Unauthorized: ${errorDetail}`);
     }
     if (response.status === 403) {
@@ -91,6 +173,12 @@ export const api = {
     request<AuthTokens>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(credentials),
+    }),
+
+  refreshToken: (refreshToken: string): Promise<AuthTokens> =>
+    request<AuthTokens>('/auth/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ refresh_token: refreshToken }),
     }),
 
   forceResetPassword: (payload: { new_password: string; confirm_password: string }): Promise<AuthTokens> =>

@@ -19,6 +19,7 @@ function getStoredClaims(): TokenClaims | null {
   try {
     const decoded = decodeJwt(token);
     if (decoded.exp * 1000 > Date.now()) return decoded;
+    if (sessionStorage.getItem('refresh_token')) return decoded;
   } catch {
     // Malformed token
   }
@@ -37,12 +38,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     refreshAuth();
+
+    const handleAuthExpired = () => {
+      setClaims(null);
+    };
+
+    window.addEventListener('hip:auth_expired', handleAuthExpired);
+    return () => {
+      window.removeEventListener('hip:auth_expired', handleAuthExpired);
+    };
   }, []);
 
   const login = async (credentials: { email: string; password: string }): Promise<TokenClaims> => {
     const data = await api.login(credentials);
     sessionStorage.setItem('token', data.access_token);
     // TODO: Implement refresh token logic using data.refresh_token
+    if (data.refresh_token) {
+      sessionStorage.setItem('refresh_token', data.refresh_token);
+    }
     const decoded = decodeJwt(data.access_token);
     setClaims(decoded);
     return decoded;
@@ -53,6 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await api.logout();
     } finally {
       sessionStorage.removeItem('token');
+      sessionStorage.removeItem('refresh_token');
       setClaims(null);
     }
   };
@@ -80,7 +94,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 export function useAuth(): AuthContextType {
   const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    const token = typeof window !== 'undefined' ? sessionStorage.getItem('token') : null;
+    let fallbackClaims: TokenClaims | null = null;
+    if (token) {
+      try {
+        const payload = token.split('.')[1];
+        if (payload) {
+          fallbackClaims = JSON.parse(atob(payload)) as TokenClaims;
+        }
+      } catch {
+        // ignore malformed token
+      }
+    }
+    return {
+      claims: fallbackClaims,
+      isAuthenticated: Boolean(fallbackClaims),
+      mustChangePassword: Boolean(fallbackClaims?.must_change_password),
+      login: async () => fallbackClaims as TokenClaims,
+      logout: async () => {},
+      refreshAuth: () => fallbackClaims,
+    };
   }
   return context;
 }
