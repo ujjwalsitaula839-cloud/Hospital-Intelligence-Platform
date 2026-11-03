@@ -13,6 +13,7 @@ interface EmsIntakeFormProps {
   onSuccess?: (result: {
     patient: Patient;
     admission: Admission;
+    etaMinutes?: number;
   }) => void;
   onCancel?: () => void;
   isModal?: boolean;
@@ -174,6 +175,8 @@ export default function EmsIntakeForm({
         admissionId: createdAdmission.admission_id,
       });
 
+      const submittedEta = form.eta_minutes ? Number(form.eta_minutes) : 10;
+
       // 6. Reset form immediately to default values for subsequent calls
       setForm(getEmptyEmsForm());
       setErrors({});
@@ -183,6 +186,7 @@ export default function EmsIntakeForm({
         onSuccess({
           patient: createdPatient,
           admission: createdAdmission,
+          etaMinutes: submittedEta,
         });
       }
     } catch (err: unknown) {
@@ -240,16 +244,16 @@ export default function EmsIntakeForm({
 
       {/* Success Notification Banner */}
       {successBanner && (
-        <div className="p-4 bg-emerald-950/70 border border-emerald-600/70 rounded-lg flex items-center justify-between text-xs text-emerald-200 animate-fadeIn shadow-sm">
+        <div className="p-4 bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-600/70 rounded-xl flex items-center justify-between text-xs text-emerald-900 dark:text-emerald-200 animate-fadeIn shadow-sm ems-success-card">
           <div className="flex items-center space-x-3">
-            <span className="flex items-center justify-center h-6 w-6 rounded-full bg-emerald-900/80 text-emerald-300 font-bold text-sm">
+            <span className="flex items-center justify-center h-7 w-7 rounded-full bg-emerald-100 dark:bg-emerald-900/80 text-emerald-700 dark:text-emerald-300 font-bold text-sm border border-emerald-300 dark:border-emerald-700">
               ✓
             </span>
             <div>
-              <p className="font-semibold text-emerald-100 text-sm">
+              <p className="font-bold text-emerald-950 dark:text-emerald-100 text-sm">
                 Inbound EMS Call Logged Successfully!
               </p>
-              <p className="text-xs text-emerald-300/90 mt-0.5">
+              <p className="text-xs text-emerald-800 dark:text-emerald-300/90 mt-0.5 font-medium">
                 {successBanner.message} Form has been reset ready for the next incoming call.
               </p>
             </div>
@@ -257,7 +261,7 @@ export default function EmsIntakeForm({
           <button
             type="button"
             onClick={() => setSuccessBanner(null)}
-            className="text-emerald-400 hover:text-emerald-200 text-xs px-2.5 py-1 rounded-md hover:bg-emerald-900/40 transition-colors"
+            className="text-emerald-700 hover:text-emerald-900 dark:text-emerald-400 dark:hover:text-emerald-200 text-xs px-2.5 py-1 rounded-md hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors font-semibold"
           >
             Dismiss ✕
           </button>
@@ -266,15 +270,15 @@ export default function EmsIntakeForm({
 
       {/* API Submission Error */}
       {apiError && (
-        <div className="p-3.5 bg-red-950/70 border border-red-700/70 text-red-200 text-xs rounded-lg flex items-center justify-between">
+        <div className="p-3.5 bg-red-50 dark:bg-red-950/70 border border-red-300 dark:border-red-700/70 text-red-900 dark:text-red-200 text-xs rounded-xl flex items-center justify-between shadow-sm">
           <div className="flex items-center space-x-2">
-            <span className="text-sm">⚠</span>
-            <span>{apiError}</span>
+            <span className="text-sm font-bold text-red-700 dark:text-red-400">⚠</span>
+            <span className="font-medium">{apiError}</span>
           </div>
           <button
             type="button"
             onClick={() => setApiError(null)}
-            className="text-red-400 hover:text-red-200 text-xs px-2 py-0.5 rounded-md hover:bg-red-900/40"
+            className="text-red-700 hover:text-red-900 dark:text-red-400 dark:hover:text-red-200 text-xs px-2 py-0.5 rounded-md hover:bg-red-100 dark:hover:bg-red-900/40 font-semibold"
           >
             ✕
           </button>

@@ -8,6 +8,7 @@ interface EmsCallIntakeModalProps {
   onSuccess: (result: {
     patient: Patient;
     admission: Admission;
+    etaMinutes?: number;
   }) => void;
 }
 
@@ -28,18 +29,18 @@ export default function EmsCallIntakeModal({
       />
 
       {/* Modal Dialog Card */}
-      <div className="relative z-10 w-full max-w-4xl bg-zinc-950 border border-zinc-700/80 shadow-2xl rounded-2xl overflow-hidden max-h-[92vh] flex flex-col my-auto animate-fadeIn">
+      <div className="relative z-10 w-full max-w-4xl bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-700/80 shadow-2xl rounded-2xl overflow-hidden max-h-[92vh] flex flex-col my-auto animate-fadeIn">
         {/* Top Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-900/90">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-900/90">
           <div className="flex items-center space-x-3">
-            <span className="p-2 bg-red-950/70 border border-red-800/80 text-red-300 rounded-lg text-base">
+            <span className="p-2 bg-red-50 dark:bg-red-950/70 border border-red-200 dark:border-red-800/80 text-red-600 dark:text-red-300 rounded-lg text-base">
               📞
             </span>
             <div>
-              <h2 className="text-sm font-semibold text-white tracking-normal">
+              <h2 className="text-sm font-bold text-slate-900 dark:text-white tracking-normal">
                 EMS Radio Patch & Inbound Call Intake
               </h2>
-              <p className="text-xs text-zinc-400">
+              <p className="text-xs text-slate-500 dark:text-zinc-400">
                 Emergency dispatch intake workspace · Form resets immediately upon submission
               </p>
             </div>
@@ -47,7 +48,7 @@ export default function EmsCallIntakeModal({
           <button
             type="button"
             onClick={onClose}
-            className="text-zinc-400 hover:text-white text-sm px-2.5 py-1 rounded-md hover:bg-zinc-800 transition-colors"
+            className="text-slate-400 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-white text-sm px-2.5 py-1 rounded-md hover:bg-slate-200 dark:hover:bg-zinc-800 transition-colors font-bold"
             aria-label="Close"
           >
             ✕

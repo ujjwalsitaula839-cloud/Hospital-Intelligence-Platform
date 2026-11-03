@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
@@ -18,6 +18,7 @@ import type {
 import EmsIntakeForm from '../../components/ems/EmsIntakeForm';
 import EmsCallIntakeModal from '../../components/ems/EmsCallIntakeModal';
 import ThemeToggle from '../../components/navigation/ThemeToggle';
+import NotificationBell, { type AppNotification } from '../../components/navigation/NotificationBell';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -39,6 +40,118 @@ function getStatusBadge(status: BedStatus): { text: string; className: string } 
   }
 }
 
+const CANCELLED_HOLDS_KEY = 'hip_cancelled_ems_holds';
+const ASSIGNED_BEDS_KEY = 'hip_assigned_ems_patient_ids';
+const RECENT_EMS_RUNS_KEY = 'hip_recent_ems_runs';
+
+function getStoredCancelledHolds(): Set<number> {
+  try {
+    const raw = localStorage.getItem(CANCELLED_HOLDS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveStoredCancelledHolds(ids: Set<number>) {
+  try {
+    localStorage.setItem(CANCELLED_HOLDS_KEY, JSON.stringify(Array.from(ids)));
+  } catch (e) {
+    console.warn('Failed to save cancelled holds to localStorage', e);
+  }
+}
+
+function getStoredAssignedBeds(): Set<number> {
+  try {
+    const raw = localStorage.getItem(ASSIGNED_BEDS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveStoredAssignedBeds(ids: Set<number>) {
+  try {
+    localStorage.setItem(ASSIGNED_BEDS_KEY, JSON.stringify(Array.from(ids)));
+  } catch (e) {
+    console.warn('Failed to save assigned beds to localStorage', e);
+  }
+}
+
+const EMS_ETA_MAP_KEY = 'hip_ems_eta_map';
+
+export interface EmsEtaInfo {
+  patientId: number;
+  etaMinutes: number;
+  initialEtaSeconds: number;
+  targetTimestamp: number;
+}
+
+function getStoredEmsEtaMap(): Record<number, EmsEtaInfo> {
+  try {
+    const raw = localStorage.getItem(EMS_ETA_MAP_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveStoredEmsEtaMap(map: Record<number, EmsEtaInfo>) {
+  try {
+    localStorage.setItem(EMS_ETA_MAP_KEY, JSON.stringify(map));
+  } catch (e) {
+    console.warn('Failed to save EMS ETA map to localStorage', e);
+  }
+}
+
+function parseEtaMinutes(notes?: string | null): number {
+  if (!notes) return 10;
+  const match = notes.match(/ETA:\s*~?(\d+)/i);
+  if (match && match[1]) {
+    const val = parseInt(match[1], 10);
+    if (!isNaN(val) && val > 0) return val;
+  }
+  return 10;
+}
+
+function formatEtaDuration(totalSeconds: number): string {
+  const abs = Math.abs(totalSeconds);
+  const mins = Math.floor(abs / 60);
+  const secs = Math.floor(abs % 60);
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function getStoredRecentEmsRuns(): {
+  id: string;
+  patient: Patient;
+  admission: Admission;
+  bedCode?: string;
+  timestamp: string;
+}[] {
+  try {
+    const raw = localStorage.getItem(RECENT_EMS_RUNS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredRecentEmsRuns(runs: unknown[]) {
+  try {
+    localStorage.setItem(RECENT_EMS_RUNS_KEY, JSON.stringify(runs));
+  } catch (e) {
+    console.warn('Failed to save recent ems runs to localStorage', e);
+  }
+}
+
 export default function Clinical(): React.ReactElement {
   const { claims, logout } = useAuth();
   const navigate = useNavigate();
@@ -52,7 +165,20 @@ export default function Clinical(): React.ReactElement {
     admission: Admission;
     bedCode?: string;
     timestamp: string;
-  }[]>([]);
+  }[]>(() => getStoredRecentEmsRuns());
+  const [cancelledHoldPatientIds, setCancelledHoldPatientIds] = useState<Set<number>>(() => getStoredCancelledHolds());
+  const [assignedBedPatientIds, setAssignedBedPatientIds] = useState<Set<number>>(() => getStoredAssignedBeds());
+  const [emsEtaMap, setEmsEtaMap] = useState<Record<number, EmsEtaInfo>>(() => getStoredEmsEtaMap());
+  const [currentTime, setCurrentTime] = useState<number>(() => Date.now());
+  const approachingNotifiedRef = useRef<Set<number>>(new Set());
+
+  // 1-second countdown interval ticker for live ambulance ETA telemetry
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Beds state
   const [beds, setBeds] = useState<Bed[]>([]);
@@ -87,6 +213,21 @@ export default function Clinical(): React.ReactElement {
   const [dischargeBed, setDischargeBed] = useState<Bed | null>(null);
   const [isDischarging, setIsDischarging] = useState(false);
   const [dischargeError, setDischargeError] = useState<string | null>(null);
+
+  // EMS Bed Hold / Direct Admission Modal State
+  const [assigningEmsItem, setAssigningEmsItem] = useState<{
+    id: string;
+    patient: Patient;
+    admission: Admission;
+    bedCode?: string;
+    bedStatus?: BedStatus;
+    timestamp: string;
+    hasRealAdmission?: boolean;
+  } | null>(null);
+  const [assignTargetBedCode, setAssignTargetBedCode] = useState('');
+  const [assignOccupyImmediately, setAssignOccupyImmediately] = useState(false);
+  const [isAssigningBed, setIsAssigningBed] = useState(false);
+  const [assignBedError, setAssignBedError] = useState<string | null>(null);
 
   // Admission Drawer Form State
   const [admitSearchQuery, setAdmitSearchQuery] = useState('');
@@ -172,7 +313,8 @@ export default function Clinical(): React.ReactElement {
     setPatientsLoading(true);
     try {
       const data = await api.getPatients();
-      setPatients(data);
+      const storedCancelled = getStoredCancelledHolds();
+      setPatients(data.filter((p) => p.is_active !== false && !storedCancelled.has(p.patient_id)));
     } catch {
       // Non-blocking fetch error
     } finally {
@@ -230,19 +372,20 @@ export default function Clinical(): React.ReactElement {
     }
   }, [selectedVitalsAdmId]);
 
-interface LiveEventNotification {
-  id: string;
-  eventType: string;
-  title: string;
-  message: string;
-  actor: string;
-  bedCode?: string;
-  status?: string;
-  time: string;
-}
-
-  const [notifications, setNotifications] = useState<LiveEventNotification[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [wsConnected, setWsConnected] = useState<boolean>(false);
+
+  const handleMarkAllNotificationsRead = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  };
+
+  const handleClearAllNotifications = () => {
+    setNotifications([]);
+  };
+
+  const handleDismissNotification = (id: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  };
 
   // Inline WebSocket connection for real-time bed mutations
   useEffect(() => {
@@ -288,7 +431,7 @@ interface LiveEventNotification {
             })
           );
 
-          // 2. Spawn live pop-up toast notification
+          // 2. Notification for notification center
           const eventTitles: Record<string, string> = {
             BED_RESERVED: 'Bed Reserved',
             BED_OCCUPIED: 'Patient Admitted',
@@ -303,7 +446,7 @@ interface LiveEventNotification {
           const message = data.message || `Status updated to ${data.status || 'NEW'}`;
           const toastId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-          const newNotification: LiveEventNotification = {
+          const newNotification: AppNotification = {
             id: toastId,
             eventType: data.event_type,
             title,
@@ -312,14 +455,11 @@ interface LiveEventNotification {
             bedCode: data.bed_code || data.to_bed,
             status: data.status,
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            read: false,
           };
 
-          setNotifications((prev) => [newNotification, ...prev.slice(0, 4)]);
-
-          // Auto-dismiss after 6 seconds
-          setTimeout(() => {
-            setNotifications((prev) => prev.filter((n) => n.id !== toastId));
-          }, 6000);
+          // Route exclusively to notification center (NotificationBell)
+          setNotifications((prev) => [newNotification, ...prev.filter((n) => n.id !== toastId).slice(0, 49)]);
         } catch {
           // Ignore parse errors
         }
@@ -374,6 +514,7 @@ interface LiveEventNotification {
         setChartPatient(null);
         setChartingAdmissionId(null);
         setAllocatingEquipment(null);
+        setAssigningEmsItem(null);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -500,13 +641,53 @@ interface LiveEventNotification {
 
   // Cancel Hold / Reservation for RESERVED bed
   const handleCancelReservation = async (bed: Bed) => {
+    const pId = bed.patient_id;
+    if (pId) {
+      setCancelledHoldPatientIds((prev) => {
+        const next = new Set(prev).add(pId);
+        saveStoredCancelledHolds(next);
+        return next;
+      });
+      setRecentEmsRuns((prev) => {
+        const filtered = prev.filter((r) => r.patient.patient_id !== pId);
+        saveStoredRecentEmsRuns(filtered);
+        return filtered;
+      });
+      setPatients((prev) => prev.filter((p) => p.patient_id !== pId));
+      setEmsEtaMap((prev) => {
+        if (!pId || !prev[pId]) return prev;
+        const copy = { ...prev };
+        delete copy[pId];
+        saveStoredEmsEtaMap(copy);
+        return copy;
+      });
+    }
     try {
       if (bed.admission_id) {
         await api.dischargeAdmission(bed.admission_id);
       } else {
         await api.updateBedStatus(bed.bed_code, 'DIRTY');
       }
+      if (pId) {
+        try {
+          await api.deactivatePatient(pId);
+        } catch {
+          // Ignore if deactivation is optional or already processed
+        }
+      }
+      const cancelNotif: AppNotification = {
+        id: `${Date.now()}`,
+        eventType: 'HOLD_CANCELLED',
+        title: 'Bed Hold Cancelled',
+        message: `Reservation hold for bed ${bed.bed_code} was cancelled. Bed set to DIRTY.`,
+        actor: claims?.full_name || claims?.username || 'Staff',
+        bedCode: bed.bed_code,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        read: false,
+      };
+      setNotifications((prev) => [cancelNotif, ...prev.slice(0, 49)]);
       await fetchBeds();
+      await fetchPatients();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to cancel hold.';
       alert(msg);
@@ -774,18 +955,150 @@ interface LiveEventNotification {
     (b) => b.status === 'AVAILABLE' && b.bed_code !== transferFromBed?.bed_code
   );
 
+  const availableBeds = useMemo(() => beds.filter((b) => b.status === 'AVAILABLE'), [beds]);
+
+  // Confirm Bed Hold / Direct Admission for Inbound EMS Patient
+  const handleConfirmEmsBedAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assigningEmsItem || !assignTargetBedCode) {
+      setAssignBedError('Please select a destination bed.');
+      return;
+    }
+
+    setIsAssigningBed(true);
+    setAssignBedError(null);
+
+    try {
+      let admissionId = assigningEmsItem.admission?.admission_id;
+      // If patient does not have a real database admission yet, create one
+      if (!assigningEmsItem.hasRealAdmission || !admissionId || admissionId === assigningEmsItem.patient.patient_id) {
+        const createdAdm = await api.createAdmission({
+          patient_id: assigningEmsItem.patient.patient_id,
+          acuity_level: assigningEmsItem.admission?.acuity_level || 'ESI_3',
+          primary_diagnosis: assigningEmsItem.admission?.primary_diagnosis || 'Inbound EMS Arrival',
+        });
+        admissionId = createdAdm.admission_id;
+      }
+
+      // Step 1: Reserve the bed with verified admission and patient ID
+      await api.updateBedStatus(assignTargetBedCode, 'RESERVED', {
+        admission_id: admissionId,
+        patient_id: assigningEmsItem.patient.patient_id,
+      });
+
+      // Step 2: If direct admission requested, transition bed to OCCUPIED
+      if (assignOccupyImmediately) {
+        await api.updateBedStatus(assignTargetBedCode, 'OCCUPIED');
+      }
+
+      // Remove from unassigned recent EMS runs now that bed assignment is complete
+      const assignedPId = assigningEmsItem.patient.patient_id;
+      const assignedPatientName = `${assigningEmsItem.patient.first_name} ${assigningEmsItem.patient.last_name}`;
+
+      // Mark patient as assigned to a bed so they never appear on the inbound unassigned queue
+      setAssignedBedPatientIds((prev) => {
+        const next = new Set(prev).add(assignedPId);
+        saveStoredAssignedBeds(next);
+        return next;
+      });
+
+      // Optimistically update beds so Bed Matrix immediately reflects the patient and status
+      setBeds((prevBeds) =>
+        prevBeds.map((b) =>
+          b.bed_code === assignTargetBedCode
+            ? {
+                ...b,
+                status: assignOccupyImmediately ? 'OCCUPIED' : 'RESERVED',
+                admission_id: admissionId,
+                patient_id: assignedPId,
+                patient_name: assignedPatientName,
+                primary_diagnosis: assigningEmsItem.admission?.primary_diagnosis || 'Inbound EMS Arrival',
+                acuity_level: assigningEmsItem.admission?.acuity_level || 'ESI_3',
+              }
+            : b
+        )
+      );
+
+      setRecentEmsRuns((prev) => {
+        const filtered = prev.filter((r) => r.patient.patient_id !== assignedPId);
+        saveStoredRecentEmsRuns(filtered);
+        return filtered;
+      });
+
+      setEmsEtaMap((prev) => {
+        if (!assignedPId || !prev[assignedPId]) return prev;
+        const copy = { ...prev };
+        delete copy[assignedPId];
+        saveStoredEmsEtaMap(copy);
+        return copy;
+      });
+
+      const assignNotif: AppNotification = {
+        id: `${Date.now()}`,
+        eventType: assignOccupyImmediately ? 'PATIENT_ADMITTED' : 'BED_RESERVED',
+        title: assignOccupyImmediately ? 'Patient Admitted to Bed' : 'Bed Reserved (Hold)',
+        message: `${assignedPatientName} was ${
+          assignOccupyImmediately ? 'admitted to' : 'held in'
+        } bed ${assignTargetBedCode}.`,
+        actor: claims?.full_name || claims?.username || 'Staff',
+        bedCode: assignTargetBedCode,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        read: false,
+      };
+      setNotifications((prev) => [assignNotif, ...prev.slice(0, 49)]);
+
+      setAssigningEmsItem(null);
+      await fetchBeds({ silent: true });
+      await fetchPatients();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to hold bed.';
+      setAssignBedError(msg);
+    } finally {
+      setIsAssigningBed(false);
+    }
+  };
+
   // EMS Call Intake Success Handler
   const handleEmsSuccess = (result: {
     patient: Patient;
     admission: Admission;
+    etaMinutes?: number;
   }) => {
+    const etaMin = result.etaMinutes || parseEtaMinutes(result.admission.notes);
+    const initialSec = etaMin * 60;
+    const targetTs = Date.now() + initialSec * 1000;
+    const newEtaInfo: EmsEtaInfo = {
+      patientId: result.patient.patient_id,
+      etaMinutes: etaMin,
+      initialEtaSeconds: initialSec,
+      targetTimestamp: targetTs,
+    };
+    setEmsEtaMap((prev) => {
+      const next = { ...prev, [result.patient.patient_id]: newEtaInfo };
+      saveStoredEmsEtaMap(next);
+      return next;
+    });
+
     const newRun = {
       id: `${result.patient.patient_id}-${result.admission.admission_id}`,
       patient: result.patient,
       admission: result.admission,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
-    setRecentEmsRuns((prev) => [newRun, ...prev.filter((r) => r.patient.patient_id !== result.patient.patient_id)]);
+    setRecentEmsRuns((prev) => {
+      const updated = [newRun, ...prev.filter((r) => r.patient.patient_id !== result.patient.patient_id)];
+      saveStoredRecentEmsRuns(updated);
+      return updated;
+    });
+    setCancelledHoldPatientIds((prev) => {
+      if (prev.has(result.patient.patient_id)) {
+        const next = new Set(prev);
+        next.delete(result.patient.patient_id);
+        saveStoredCancelledHolds(next);
+        return next;
+      }
+      return prev;
+    });
     fetchPatients();
     fetchBeds();
   };
@@ -796,36 +1109,62 @@ interface LiveEventNotification {
     patient: Patient;
     admission: Admission;
     bedCode?: string;
+    hasRealAdmission?: boolean;
   }) => {
+    const pId = item.patient?.patient_id;
+    const admId = item.admission?.admission_id;
+
+    // Instantly remove patient and hold from UI state (optimistic) and persist to storage
+    if (pId) {
+      setCancelledHoldPatientIds((prev) => {
+        const next = new Set(prev).add(pId);
+        saveStoredCancelledHolds(next);
+        return next;
+      });
+      setRecentEmsRuns((prev) => {
+        const filtered = prev.filter((r) => r.patient.patient_id !== pId);
+        saveStoredRecentEmsRuns(filtered);
+        return filtered;
+      });
+      setPatients((prev) => prev.filter((p) => p.patient_id !== pId));
+      setEmsEtaMap((prev) => {
+        if (!pId || !prev[pId]) return prev;
+        const copy = { ...prev };
+        delete copy[pId];
+        saveStoredEmsEtaMap(copy);
+        return copy;
+      });
+    }
+
     try {
-      if (item.admission?.admission_id) {
+      // Guard against fake admission_id: only discharge if item has a real admission in the database
+      if (item.hasRealAdmission && admId) {
         try {
-          await api.dischargeAdmission(item.admission.admission_id);
-        } catch {
-          // Ignore if already discharged
+          await api.dischargeAdmission(admId);
+        } catch (dischargeErr) {
+          console.warn(`Discharge admission #${admId} skipped:`, dischargeErr);
         }
       }
-      if (item.patient?.patient_id) {
+      if (pId) {
         try {
-          await api.deactivatePatient(item.patient.patient_id);
-        } catch {
-          // Fallback
+          await api.deactivatePatient(pId);
+        } catch (deactErr) {
+          console.warn(`Patient #${pId} deactivation warning (handled via local client hold cancellation):`, deactErr);
         }
       }
-      setRecentEmsRuns((prev) => prev.filter((r) => r.patient.patient_id !== item.patient.patient_id));
-      const toastId = `${Date.now()}`;
-      setNotifications((prev) => [
-        {
-          id: toastId,
-          eventType: 'HOLD_CANCELLED',
-          title: 'EMS Inbound Hold Cancelled',
-          message: `Inbound hold for ${item.patient.first_name} ${item.patient.last_name} was cancelled and record removed.`,
-          actor: claims?.full_name || claims?.username || 'Staff',
-          bedCode: item.bedCode,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        },
-        ...prev.slice(0, 4),
-      ]);
+      const notifId = `${Date.now()}`;
+      const cancelNotif: AppNotification = {
+        id: notifId,
+        eventType: 'HOLD_CANCELLED',
+        title: 'EMS Inbound Hold Cancelled',
+        message: `Inbound hold for ${item.patient.first_name} ${item.patient.last_name} was cancelled and record removed.`,
+        actor: claims?.full_name || claims?.username || 'Staff',
+        bedCode: item.bedCode,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        read: false,
+      };
+      // Route exclusively to notification center (NotificationBell)
+      setNotifications((prev) => [cancelNotif, ...prev.slice(0, 49)]);
       await fetchPatients();
       await fetchBeds({ silent: true });
     } catch (err: unknown) {
@@ -834,50 +1173,140 @@ interface LiveEventNotification {
   };
 
   // Aggregated EMS Inbound Patients & Admissions Worklist
+  // Only shows pending inbound ambulance arrivals that have NOT yet been assigned to a hospital bed!
   const emsPatientsList = useMemo(() => {
+    // Collect all patient IDs, admission IDs, and patient names already assigned to a hospital bed (RESERVED or OCCUPIED)
+    const assignedPatientIds = new Set<number>(assignedBedPatientIds);
+    const assignedAdmissionIds = new Set<number>();
+    const assignedPatientNames = new Set<string>();
+
+    for (const b of beds) {
+      if (b.status === 'RESERVED' || b.status === 'OCCUPIED') {
+        if (b.patient_id) assignedPatientIds.add(b.patient_id);
+        if (b.admission_id) assignedAdmissionIds.add(b.admission_id);
+        if (b.patient_name) assignedPatientNames.add(b.patient_name.trim().toLowerCase());
+      }
+    }
+
     const recentPatientIds = new Set(recentEmsRuns.map((r) => r.patient.patient_id));
-    const autoDetected = patients.filter(
-      (p) =>
-        p.is_active !== false &&
-        !recentPatientIds.has(p.patient_id) &&
-        (p.last_name.toUpperCase().includes('EMS') ||
-          p.last_name.toUpperCase().includes('UNKNOWN') ||
-          p.first_name.toUpperCase().includes('UNKNOWN'))
-    );
+
+    // 1. Auto-detected unassigned inbound patients from MPI
+    const autoDetected = patients.filter((p) => {
+      if (p.is_active === false) return false;
+      if (cancelledHoldPatientIds.has(p.patient_id)) return false;
+      if (recentPatientIds.has(p.patient_id)) return false;
+      // If already assigned to a bed in the hospital, control has moved to the Bed Matrix
+      if (assignedPatientIds.has(p.patient_id)) return false;
+      const fullName = `${p.first_name} ${p.last_name}`.trim().toLowerCase();
+      if (assignedPatientNames.has(fullName)) return false;
+
+      const isEmsNamed =
+        (p.last_name || '').toUpperCase().includes('EMS') ||
+        (p.last_name || '').toUpperCase().includes('UNKNOWN') ||
+        (p.first_name || '').toUpperCase().includes('UNKNOWN');
+      return isEmsNamed;
+    });
+
+    // 2. Recent EMS runs that have NOT yet been assigned to a bed
+    const unassignedRecentRuns = recentEmsRuns.filter((r) => {
+      if (r.patient.is_active === false) return false;
+      if (cancelledHoldPatientIds.has(r.patient.patient_id)) return false;
+      if (assignedPatientIds.has(r.patient.patient_id)) return false;
+      if (assignedAdmissionIds.has(r.admission.admission_id)) return false;
+      const fullName = `${r.patient.first_name} ${r.patient.last_name}`.trim().toLowerCase();
+      if (assignedPatientNames.has(fullName)) return false;
+      return true;
+    });
+
     return [
-      ...recentEmsRuns
-        .filter((r) => r.patient.is_active !== false)
-        .map((r) => {
-          const latestPatient = patients.find((p) => p.patient_id === r.patient.patient_id) || r.patient;
-          const matchingBed = beds.find((b) => b.admission_id === r.admission.admission_id);
-          return {
-            id: r.id,
-            patient: latestPatient,
-            admission: r.admission,
-            bedCode: matchingBed?.bed_code,
-            bedStatus: matchingBed?.status,
-            timestamp: r.timestamp,
-          };
-        }),
+      ...unassignedRecentRuns.map((r) => {
+        const latestPatient = patients.find((p) => p.patient_id === r.patient.patient_id) || r.patient;
+        return {
+          id: r.id,
+          patient: latestPatient,
+          admission: r.admission,
+          bedCode: undefined,
+          bedStatus: undefined,
+          timestamp: r.timestamp,
+          hasRealAdmission: true,
+        };
+      }),
       ...autoDetected.map((p) => {
-        const matchingBed = beds.find((b) => b.patient_id === p.patient_id);
         return {
           id: `p-${p.patient_id}`,
           patient: p,
           admission: {
-            admission_id: matchingBed?.admission_id || p.patient_id,
+            admission_id: p.patient_id,
             patient_id: p.patient_id,
             arrival_datetime: p.create_datetime || new Date().toISOString(),
-            acuity_level: (matchingBed?.acuity_level || 'ESI_3') as AcuityLevel,
-            primary_diagnosis: matchingBed?.primary_diagnosis || 'EMS Inbound Radio Report',
+            acuity_level: 'ESI_3' as AcuityLevel,
+            primary_diagnosis: 'EMS Inbound Radio Report',
           } as Admission,
-          bedCode: matchingBed?.bed_code,
-          bedStatus: matchingBed?.status,
+          bedCode: undefined,
+          bedStatus: undefined,
           timestamp: 'Recorded Record',
+          hasRealAdmission: false,
         };
       }),
     ];
-  }, [recentEmsRuns, patients, beds]);
+  }, [recentEmsRuns, patients, beds, cancelledHoldPatientIds, assignedBedPatientIds]);
+
+  // Ensure all tracked inbound EMS patients have an active ETA target
+  useEffect(() => {
+    setEmsEtaMap((prev) => {
+      let hasUpdates = false;
+      const updatedMap = { ...prev };
+
+      emsPatientsList.forEach((item) => {
+        const pId = item.patient.patient_id;
+        if (!updatedMap[pId]) {
+          const parsedMin = parseEtaMinutes(item.admission.notes);
+          const createdTs = item.patient.create_datetime ? new Date(item.patient.create_datetime).getTime() : NaN;
+          const targetTs = !isNaN(createdTs) && (Date.now() - createdTs < parsedMin * 60 * 1000)
+            ? createdTs + parsedMin * 60 * 1000
+            : Date.now() + parsedMin * 60 * 1000;
+          updatedMap[pId] = {
+            patientId: pId,
+            etaMinutes: parsedMin,
+            initialEtaSeconds: parsedMin * 60,
+            targetTimestamp: targetTs,
+          };
+          hasUpdates = true;
+        }
+      });
+
+      if (hasUpdates) {
+        saveStoredEmsEtaMap(updatedMap);
+        return updatedMap;
+      }
+      return prev;
+    });
+  }, [emsPatientsList]);
+
+  // Check for approaching ambulances (< 1 minute ETA) and notify staff
+  useEffect(() => {
+    emsPatientsList.forEach((item) => {
+      const pId = item.patient.patient_id;
+      const eta = emsEtaMap[pId];
+      if (!eta) return;
+      const remainingSec = Math.round((eta.targetTimestamp - currentTime) / 1000);
+      if (remainingSec > 0 && remainingSec <= 60) {
+        if (!approachingNotifiedRef.current.has(pId)) {
+          approachingNotifiedRef.current.add(pId);
+          const notif: AppNotification = {
+            id: `approaching-${pId}-${Date.now()}`,
+            eventType: 'AMBULANCE_APPROACHING',
+            title: 'Ambulance Approaching',
+            message: `Ambulance for ${item.patient.first_name} ${item.patient.last_name} is arriving in under 1 minute! Prepare ED bay.`,
+            actor: 'Dispatch Telemetry',
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            read: false,
+          };
+          setNotifications((prev) => [notif, ...prev.slice(0, 49)]);
+        }
+      }
+    });
+  }, [currentTime, emsPatientsList, emsEtaMap]);
 
   const displayedBeds = beds.filter((b) => {
     const matchesDept = bedDeptFilter === 'ALL' || b.department.toUpperCase() === bedDeptFilter.toUpperCase();
@@ -891,63 +1320,6 @@ interface LiveEventNotification {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      {/* Real-time WebSocket Live Telemetry Notifications */}
-      <div className="fixed top-16 right-5 z-50 flex flex-col gap-2.5 max-w-sm pointer-events-none">
-        {notifications.map((n) => {
-          const badgeColor =
-            n.status === 'AVAILABLE'
-              ? 'bg-emerald-950/90 text-emerald-300 border-emerald-700/80'
-              : n.status === 'RESERVED'
-              ? 'bg-amber-950/90 text-amber-300 border-amber-700/80'
-              : n.status === 'OCCUPIED'
-              ? 'bg-sky-950/90 text-sky-300 border-sky-700/80'
-              : n.status === 'DIRTY'
-              ? 'bg-red-950/90 text-red-300 border-red-700/80'
-              : 'bg-zinc-800 text-zinc-300 border-zinc-700';
-
-          return (
-            <div
-              key={n.id}
-              className="pointer-events-auto bg-zinc-900/95 border border-zinc-700/90 shadow-2xl rounded-xs p-3.5 backdrop-blur-md transition-all animate-in slide-in-from-top-3 duration-200"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center space-x-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                  <span className={`text-[10px] font-mono uppercase font-bold tracking-wider px-2 py-0.5 border ${badgeColor}`}>
-                    {n.status || n.eventType}
-                  </span>
-                  {n.bedCode && (
-                    <span className="font-mono text-xs font-bold text-white bg-zinc-950 px-1.5 py-0.5 border border-zinc-800">
-                      {n.bedCode}
-                    </span>
-                  )}
-                </div>
-                <button
-                  onClick={() => setNotifications((prev) => prev.filter((item) => item.id !== n.id))}
-                  className="text-zinc-500 hover:text-zinc-300 text-xs font-mono leading-none"
-                  aria-label="Dismiss notification"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="mt-2">
-                <p className="text-xs font-bold text-white">{n.title}</p>
-                <p className="text-xs text-zinc-300 mt-0.5 leading-relaxed">{n.message}</p>
-              </div>
-
-              <div className="mt-2.5 pt-2 border-t border-zinc-800/80 flex items-center justify-between text-[10px] font-mono text-zinc-400">
-                <span>By: <span className="text-zinc-200 font-semibold">{n.actor}</span></span>
-                <span>{n.time}</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
       {/* Header */}
       <header className="border-b border-zinc-800 bg-zinc-900/60 px-6 py-3.5">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -985,6 +1357,13 @@ interface LiveEventNotification {
                 {wsConnected ? 'LIVE SYNC' : 'RECONNECTING'}
               </span>
             </div>
+
+            <NotificationBell
+              notifications={notifications}
+              onMarkAllAsRead={handleMarkAllNotificationsRead}
+              onClearAll={handleClearAllNotifications}
+              onDismissNotification={handleDismissNotification}
+            />
 
             <ThemeToggle />
 
@@ -1357,7 +1736,7 @@ interface LiveEventNotification {
                                   setChartingBedCode(bed.bed_code);
                                   setVitalsSubmitError(null);
                                 }}
-                                className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 py-1 px-2 text-[11px] font-mono tracking-wider text-center"
+                                className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 dark:border-zinc-700 py-1.5 px-2 text-[11px] font-mono font-semibold tracking-wider text-center rounded transition-colors shadow-xs"
                               >
                                 Chart Vitals
                               </button>
@@ -1369,7 +1748,7 @@ interface LiveEventNotification {
                                   setTransferToBedCode('');
                                   setTransferError(null);
                                 }}
-                                className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 py-1 px-2 text-[11px] font-mono tracking-wider text-center"
+                                className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 dark:border-zinc-700 py-1.5 px-2 text-[11px] font-mono font-semibold tracking-wider text-center rounded transition-colors shadow-xs"
                               >
                                 Transfer
                               </button>
@@ -1381,7 +1760,7 @@ interface LiveEventNotification {
                                 setDischargeBed(bed);
                                 setDischargeError(null);
                               }}
-                              className="w-full border border-red-900 bg-red-950/40 hover:bg-red-900/60 text-red-300 py-1 text-[11px] font-mono tracking-wider transition-colors"
+                              className="w-full border border-red-300 bg-red-50 hover:bg-red-100 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:hover:bg-red-900/60 dark:text-red-300 py-1.5 text-[11px] font-mono font-semibold tracking-wider transition-colors rounded shadow-xs"
                             >
                               Discharge
                             </button>
@@ -1422,7 +1801,7 @@ interface LiveEventNotification {
                             <button
                               type="button"
                               onClick={() => handleCancelReservation(bed)}
-                              className="w-full border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-white py-1 text-[11px] font-mono uppercase tracking-wider transition-colors"
+                              className="w-full border border-slate-300 dark:border-zinc-700 hover:border-slate-400 dark:hover:border-zinc-500 bg-slate-50 dark:bg-zinc-900 text-slate-700 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white py-1 text-[11px] font-mono uppercase tracking-wider transition-colors rounded"
                             >
                               Cancel Hold
                             </button>
@@ -2044,18 +2423,64 @@ interface LiveEventNotification {
                       ? 'bg-orange-950 border-orange-700 text-orange-300'
                       : 'bg-yellow-950 border-yellow-700 text-yellow-300';
 
+                    const pId = item.patient.patient_id;
+                    const eta = emsEtaMap[pId] || {
+                      patientId: pId,
+                      etaMinutes: parseEtaMinutes(item.admission?.notes),
+                      initialEtaSeconds: parseEtaMinutes(item.admission?.notes) * 60,
+                      targetTimestamp: currentTime + parseEtaMinutes(item.admission?.notes) * 60 * 1000,
+                    };
+                    const remainingSeconds = Math.round((eta.targetTimestamp - currentTime) / 1000);
+                    const initialSeconds = eta.initialEtaSeconds || 600;
+                    const elapsedSeconds = Math.max(0, initialSeconds - remainingSeconds);
+                    const progressPct = Math.min(100, Math.max(0, (elapsedSeconds / initialSeconds) * 100));
+                    const isApproaching = remainingSeconds > 0 && remainingSeconds <= 60;
+                    const isOverdue = remainingSeconds <= 0;
+
+                    const cardAlertClasses = isOverdue
+                      ? 'border-2 border-red-600 dark:border-red-500 shadow-md ring-1 ring-red-500/40'
+                      : isApproaching
+                      ? 'border-2 border-red-500 dark:border-red-500 ring-2 ring-red-500/80 bg-red-50/40 dark:bg-red-950/40 animate-pulse shadow-md'
+                      : 'border border-slate-200 dark:border-zinc-800/90 hover:border-slate-300 dark:hover:border-zinc-700 shadow-sm dark:shadow-md';
+
                     return (
                       <div
                         key={item.id}
-                        className="bg-zinc-950 border border-zinc-800/90 hover:border-zinc-700 p-4 rounded-xl flex flex-col justify-between space-y-3.5 shadow-md transition-all"
+                        className={`bg-white dark:bg-zinc-950 p-4 rounded-xl flex flex-col justify-between space-y-3.5 transition-all ems-patient-card overflow-hidden ${cardAlertClasses}`}
                       >
+                        {/* 1. OVERDUE / APPROACHING TOP BANNER */}
+                        {isOverdue && (
+                          <div className="-mt-4 -mx-4 mb-3 py-1.5 px-3.5 bg-red-600 text-white font-mono font-bold text-xs uppercase tracking-wider flex items-center justify-between shadow-xs animate-pulse">
+                            <div className="flex items-center space-x-1.5">
+                              <span className="text-sm">⚠️</span>
+                              <span>OVERDUE</span>
+                            </div>
+                            <span className="bg-red-700/90 px-2 py-0.5 rounded text-[11px] font-mono">
+                              +{formatEtaDuration(remainingSeconds)}
+                            </span>
+                          </div>
+                        )}
+                        {isApproaching && !isOverdue && (
+                          <div className="-mt-4 -mx-4 mb-3 py-1.5 px-3.5 bg-red-600 text-white font-mono font-bold text-xs uppercase tracking-wider flex items-center justify-between shadow-xs animate-pulse">
+                            <div className="flex items-center space-x-1.5">
+                              <span className="animate-bounce inline-block">
+                                <span className="inline-block transform -scale-x-100">🚑</span>
+                              </span>
+                              <span>AMBULANCE APPROACHING (&lt; 1 MIN)</span>
+                            </div>
+                            <span className="bg-red-700 px-2 py-0.5 rounded text-[11px] font-mono">
+                              {formatEtaDuration(remainingSeconds)}
+                            </span>
+                          </div>
+                        )}
+
                         <div className="space-y-2.5">
                           <div className="flex items-start justify-between">
                             <div>
-                              <span className="text-[11px] text-zinc-500 uppercase block font-medium">
+                              <span className="text-[11px] text-slate-500 dark:text-zinc-500 uppercase block font-semibold tracking-wider">
                                 MRN #{item.patient.patient_id}
                               </span>
-                              <h4 className="text-sm font-semibold text-white truncate max-w-[200px]">
+                              <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[200px]">
                                 {item.patient.first_name} {item.patient.last_name}
                               </h4>
                             </div>
@@ -2066,37 +2491,130 @@ interface LiveEventNotification {
                             </span>
                           </div>
 
-                          <div className="text-xs text-zinc-400 space-y-1">
+                          <div className="text-xs space-y-1">
                             <div>
-                              <span className="text-zinc-500">Demographics: </span>
-                              <span className="text-zinc-200">
+                              <span className="text-slate-500 dark:text-zinc-500 font-medium">Demographics: </span>
+                              <span className="text-slate-800 dark:text-zinc-200 font-medium">
                                 {item.patient.gender} · DOB: {item.patient.date_of_birth}
                               </span>
                             </div>
                             {item.admission.primary_diagnosis && (
                               <div className="truncate">
-                                <span className="text-zinc-500">Complaint: </span>
-                                <span className="text-zinc-200">
+                                <span className="text-slate-500 dark:text-zinc-500 font-medium">Complaint: </span>
+                                <span className="text-slate-800 dark:text-zinc-200 font-medium">
                                   {item.admission.primary_diagnosis}
                                 </span>
                               </div>
                             )}
                             {item.admission.notes && (
-                              <div className="text-[11px] text-zinc-400 truncate">
-                                <span className="text-zinc-500">Telemetry: </span>
-                                <span>{item.admission.notes}</span>
+                              <div className="text-[11px] truncate">
+                                <span className="text-slate-500 dark:text-zinc-500 font-medium">Telemetry: </span>
+                                <span className="text-slate-700 dark:text-zinc-400 font-medium">{item.admission.notes}</span>
                               </div>
                             )}
                           </div>
                         </div>
 
+                        {/* ========================================================= */}
+                        {/* AMBULANCE APPROACHING TELEMETRY TRACK (>------) */}
+                        {/* ========================================================= */}
+                        <div className="my-1.5 p-3 bg-slate-50 dark:bg-zinc-900/90 border border-slate-200 dark:border-zinc-800 rounded-xl space-y-2.5">
+                          {/* Live Decrementing Countdown & Telemetry Header */}
+                          <div className="flex items-center justify-between text-xs font-mono">
+                            <div className="flex items-center space-x-1.5 font-bold text-slate-800 dark:text-zinc-200">
+                              <span className="text-sm inline-block transform -scale-x-100">🚑</span>
+                              <span>Ambulance Telemetry</span>
+                            </div>
+                            <div
+                              className={`font-mono text-xs font-bold px-2 py-0.5 rounded border transition-colors ${
+                                isOverdue
+                                  ? 'bg-red-100 text-red-700 border-red-300 dark:bg-red-950 dark:text-red-300 dark:border-red-800'
+                                  : isApproaching
+                                  ? 'bg-red-100 text-red-700 border-red-300 dark:bg-red-950 dark:text-red-300 dark:border-red-800 animate-pulse'
+                                  : 'bg-slate-200/80 text-slate-800 border-slate-300 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700'
+                              }`}
+                            >
+                              {isOverdue
+                                ? `OVERDUE (+${formatEtaDuration(remainingSeconds)})`
+                                : `ETA: ${formatEtaDuration(remainingSeconds)}`}
+                            </div>
+                          </div>
+
+                          {/* Visual Route Line: >------ with moving ambulance */}
+                          <div className="relative pt-3 pb-1 px-1">
+                            {/* Road track line */}
+                            <div className="h-2 w-full bg-slate-200 dark:bg-zinc-800 rounded-full overflow-hidden relative shadow-inner">
+                              <div
+                                className={`h-full transition-all duration-1000 ${
+                                  isOverdue
+                                    ? 'bg-red-600'
+                                    : isApproaching
+                                    ? 'bg-linear-to-r from-amber-500 to-red-500'
+                                    : 'bg-linear-to-r from-blue-500 via-amber-500 to-emerald-500'
+                                }`}
+                                style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }}
+                              />
+                            </div>
+
+                            {/* Moving Ambulance Icon (replaces `>`) */}
+                            <div
+                              className="absolute top-0 transition-all duration-1000 pointer-events-none select-none -translate-x-1/2"
+                              style={{ left: `${Math.min(94, Math.max(4, progressPct))}%` }}
+                            >
+                              <span
+                                className={`text-base leading-none inline-block ${
+                                  isApproaching ? 'animate-bounce drop-shadow-md' : ''
+                                }`}
+                                title="Ambulance approaching"
+                              >
+                                <span className="inline-block transform -scale-x-100">
+                                  🚑
+                                </span>
+                              </span>
+                            </div>
+
+                            {/* Waypoint markers */}
+                            <div className="flex justify-between items-center text-[10px] font-mono text-slate-500 dark:text-zinc-400 mt-2 font-semibold">
+                              <span className="flex items-center space-x-1">
+                                <span>📍</span>
+                                <span>Field Dispatch</span>
+                              </span>
+                              <span className="flex items-center space-x-1 font-bold text-slate-700 dark:text-zinc-300">
+                                <span>🏥</span>
+                                <span>Hospital ED</span>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Primary Bed Action: Hold Bed / Admit */}
+                        <div className="mt-2.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAssigningEmsItem(item);
+                              const defaultBed =
+                                availableBeds.find((b) => b.department === 'EMERGENCY') ||
+                                availableBeds[0];
+                              setAssignTargetBedCode(defaultBed?.bed_code || '');
+                              setAssignOccupyImmediately(false);
+                              setAssignBedError(null);
+                            }}
+                            className="w-full py-2 px-3 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-zinc-950 text-xs font-bold rounded-lg transition-colors shadow-xs flex items-center justify-center space-x-1.5"
+                            title="Hold or admit this incoming EMS patient to an available hospital bed"
+                          >
+                            <span>🛏️</span>
+                            <span>Hold Bed / Admit</span>
+                          </button>
+                        </div>
+
                         {/* Post-Arrival & Hold Action Buttons */}
-                        <div className="pt-2.5 border-t border-zinc-800/80 flex flex-wrap gap-2">
+                        <div className="pt-2 border-t border-slate-200 dark:border-zinc-800/80 flex flex-wrap gap-2">
                           {/* 1. Update Identity / Patient Arrived */}
                           <button
                             type="button"
                             onClick={() => handleOpenEditPatient(item.patient)}
-                            className="flex-1 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-xs font-medium rounded-lg transition-colors text-center"
+                            className="flex-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-800 dark:text-zinc-200 hover:text-slate-900 dark:hover:text-white text-xs font-semibold rounded-lg border border-slate-300 dark:border-transparent transition-colors text-center"
                             title="Edit patient legal name, exact DOB, phone, address once arrived"
                           >
                             ✏️ Update Identity
@@ -2109,7 +2627,7 @@ interface LiveEventNotification {
                               setChartingAdmissionId(item.admission.admission_id);
                               setChartingBedCode(item.bedCode || null);
                             }}
-                            className="flex-1 px-3 py-1.5 bg-cyan-950/50 hover:bg-cyan-900/60 border border-cyan-800/60 text-cyan-200 text-xs font-medium rounded-lg transition-colors text-center"
+                            className="flex-1 px-3 py-1.5 bg-cyan-50 hover:bg-cyan-100 dark:bg-cyan-950/50 dark:hover:bg-cyan-900/60 border border-cyan-300 dark:border-cyan-800/60 text-cyan-800 dark:text-cyan-200 text-xs font-semibold rounded-lg transition-colors text-center"
                             title="Record arrival observation vitals for this admission"
                           >
                             🩺 Chart Vitals
@@ -2119,7 +2637,7 @@ interface LiveEventNotification {
                           <button
                             type="button"
                             onClick={() => handleCancelHold(item)}
-                            className="px-2.5 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300 hover:text-rose-100 text-xs font-medium rounded-lg transition-colors text-center"
+                            className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 border border-rose-300 dark:border-rose-800/60 text-rose-700 hover:text-rose-900 dark:text-rose-300 dark:hover:text-rose-100 text-xs font-semibold rounded-lg transition-colors text-center"
                             title="Cancel this inbound hold and remove the patient"
                           >
                             ✕ Cancel Hold
@@ -2134,6 +2652,157 @@ interface LiveEventNotification {
           </div>
         )}
       </main>
+
+      {/* ================================================================= */}
+      {/* MODAL: ASSIGN & HOLD BED FOR INBOUND EMS PATIENT */}
+      {/* ================================================================= */}
+      {assigningEmsItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 bg-black/75 backdrop-blur-xs"
+            onClick={() => setAssigningEmsItem(null)}
+          />
+          <div className="relative z-10 w-full max-w-lg bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 p-6 shadow-2xl rounded-xl">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-zinc-800 mb-5">
+              <div>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-amber-600 dark:text-amber-400 font-bold">
+                  Ambulance Pre-Arrival Dispatch
+                </span>
+                <h3 className="text-xl font-bold font-mono text-slate-900 dark:text-white">
+                  Hold Bed for Inbound Patient
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAssigningEmsItem(null)}
+                className="text-slate-400 hover:text-slate-600 dark:text-zinc-400 dark:hover:text-white text-sm font-mono p-1"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {assignBedError && (
+              <div className="mb-4 p-3 bg-red-50 dark:bg-red-950 border border-red-300 dark:border-red-800 text-red-800 dark:text-red-200 text-xs font-mono rounded">
+                {assignBedError}
+              </div>
+            )}
+
+            {/* Patient Summary Card */}
+            <div className="p-3.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-lg mb-4 text-xs font-mono space-y-1">
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-900 dark:text-white text-sm">
+                  {assigningEmsItem.patient.first_name} {assigningEmsItem.patient.last_name}
+                </span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
+                  {assigningEmsItem.admission.acuity_level}
+                </span>
+              </div>
+              <div className="text-slate-600 dark:text-zinc-400 text-[11px]">
+                MRN #{assigningEmsItem.patient.patient_id} · DOB: {assigningEmsItem.patient.date_of_birth} · {assigningEmsItem.patient.gender}
+              </div>
+              {assigningEmsItem.admission.primary_diagnosis && (
+                <div className="text-slate-700 dark:text-zinc-300 text-[11px] truncate">
+                  Complaint: {assigningEmsItem.admission.primary_diagnosis}
+                </div>
+              )}
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleConfirmEmsBedAssignment} className="space-y-4">
+              {/* Available Bed Selector */}
+              <div>
+                <label
+                  htmlFor="destination_bed_select"
+                  className="block text-xs font-mono uppercase tracking-wider text-slate-700 dark:text-zinc-300 mb-1.5 font-bold"
+                >
+                  Select Destination Bed (Available Inventory):
+                </label>
+                {availableBeds.length === 0 ? (
+                  <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 text-xs rounded">
+                    ⚠️ No hospital beds are currently in AVAILABLE state. Discharge an occupied bed or assign housekeeping.
+                  </div>
+                ) : (
+                  <select
+                    id="destination_bed_select"
+                    value={assignTargetBedCode}
+                    onChange={(e) => setAssignTargetBedCode(e.target.value)}
+                    required
+                    className="w-full bg-white dark:bg-zinc-950 border border-slate-300 dark:border-zinc-800 p-2.5 text-slate-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono text-xs"
+                  >
+                    <option value="">Select an available bed...</option>
+                    {availableBeds.map((b) => (
+                      <option key={b.bed_id} value={b.bed_code}>
+                        {b.bed_code} — Room {b.room_number} ({b.department} · {b.bed_type})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* Action Type: Hold vs Direct Admit */}
+              <div className="space-y-2 pt-1">
+                <label className="block text-xs font-mono uppercase tracking-wider text-slate-700 dark:text-zinc-300 font-bold">
+                  Bed Status Action:
+                </label>
+                <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                  <button
+                    type="button"
+                    onClick={() => setAssignOccupyImmediately(false)}
+                    className={`p-3 border rounded-lg text-left transition-all ${
+                      !assignOccupyImmediately
+                        ? 'bg-amber-50 border-amber-500 text-amber-950 dark:bg-amber-950/60 dark:border-amber-600 dark:text-amber-200 ring-2 ring-amber-500/30'
+                        : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-bold">⏳ Hold Bed (RESERVED)</div>
+                    <div className="text-[10px] mt-1 opacity-80">
+                      Reserve bay while ambulance en route.
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAssignOccupyImmediately(true)}
+                    className={`p-3 border rounded-lg text-left transition-all ${
+                      assignOccupyImmediately
+                        ? 'bg-sky-50 border-sky-500 text-sky-950 dark:bg-sky-950/60 dark:border-sky-600 dark:text-sky-200 ring-2 ring-sky-500/30'
+                        : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-bold">👤 Direct Admit (OCCUPIED)</div>
+                    <div className="text-[10px] mt-1 opacity-80">
+                      Patient physically at ED bay right now.
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Buttons */}
+              <div className="flex space-x-3 pt-3 border-t border-slate-200 dark:border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setAssigningEmsItem(null)}
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 dark:border-zinc-700 py-2.5 font-bold uppercase tracking-wider text-xs rounded transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isAssigningBed || !assignTargetBedCode}
+                  className="flex-1 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-zinc-950 py-2.5 font-bold uppercase tracking-wider text-xs rounded transition-colors shadow-sm"
+                >
+                  {isAssigningBed
+                    ? 'Assigning Bed...'
+                    : assignOccupyImmediately
+                    ? 'Admit Patient to Bed'
+                    : 'Confirm Bed Hold'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ================================================================= */}
       {/* DRAWER: ADMISSION INTAKE */}
@@ -2499,7 +3168,7 @@ interface LiveEventNotification {
                 <button
                   type="button"
                   onClick={() => setDischargeBed(null)}
-                  className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white py-2.5 font-bold uppercase tracking-wider transition-colors"
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 dark:border-zinc-700 py-2.5 font-bold uppercase tracking-wider transition-colors rounded"
                 >
                   Cancel
                 </button>
@@ -2507,7 +3176,7 @@ interface LiveEventNotification {
                   type="button"
                   disabled={isDischarging}
                   onClick={handleDischargeConfirm}
-                  className="flex-1 bg-red-600 hover:bg-red-500 disabled:bg-zinc-800 text-white py-2.5 font-bold uppercase tracking-wider transition-colors"
+                  className="flex-1 bg-red-600 hover:bg-red-700 active:bg-red-800 disabled:opacity-50 text-white py-2.5 font-bold uppercase tracking-wider transition-colors shadow-md rounded border border-red-700 dark:border-red-500"
                 >
                   {isDischarging ? 'Discharging...' : 'Confirm Discharge'}
                 </button>

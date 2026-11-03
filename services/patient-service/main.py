@@ -248,7 +248,7 @@ async def health_check(db: AsyncSession = Depends(get_db)):
 
 @app.get("/records", response_model=List[PatientResponse])
 async def get_patient_records(
-    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(select(models.Patient).order_by(models.Patient.patient_id.desc()))
@@ -262,7 +262,7 @@ async def search_patients(
     last_name: Optional[str] = Query(None),
     date_of_birth: Optional[date] = Query(None),
     phone: Optional[str] = Query(None),
-    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
     filters = []
@@ -305,7 +305,7 @@ def _parse_patient_identity(patient_in: PatientCreate):
 @app.post("/register", response_model=PatientResponse, status_code=status.HTTP_201_CREATED)
 async def register_patient(
     patient_in: PatientCreate,
-    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
     """Registers patient identity. Returns existing record if exact name + DOB matches."""
@@ -365,7 +365,7 @@ async def verify_patient(
 @app.get("/patient/{patient_id}", response_model=PatientResponse)
 async def get_patient_by_id(
     patient_id: int,
-    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(select(models.Patient).where(models.Patient.patient_id == patient_id))
@@ -490,7 +490,7 @@ async def get_admission_by_id(
 @app.get("/encounters/patient/{patient_id}", response_model=List[AdmissionResponse])
 async def get_admissions_by_patient(
     patient_id: int,
-    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(models.Admission).where(
@@ -562,7 +562,7 @@ async def discharge_admission(
 async def assign_nurse_to_admission(
     admission_id: int,
     assignment_in: NurseAssignmentCreate,
-    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
     """Assigns nurse to active admission and closes previous active shift assignment."""
@@ -596,7 +596,7 @@ async def assign_nurse_to_admission(
 @app.put("/encounters/nurse-assignments/{assignment_id}/complete")
 async def complete_nurse_assignment(
     assignment_id: int,
-    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
     assignment = await db.get(models.PatientNurseAssignment, assignment_id)
@@ -613,7 +613,7 @@ async def complete_nurse_assignment(
 @app.get("/encounters/{admission_id}/nurse-assignments", response_model=List[NurseAssignmentResponse])
 async def get_admission_nurse_assignments(
     admission_id: int,
-    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(models.PatientNurseAssignment).where(
@@ -674,7 +674,7 @@ class ObservationResponse(BaseModel):
 async def record_observation(
     admission_id: int,
     obs_in: ObservationCreate,
-    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -800,7 +800,7 @@ async def update_patient(
 @app.put("/patients/{patient_id}/deactivate")
 async def deactivate_patient(
     patient_id: int,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR)),
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR, UserRole.NURSE)),
     db: AsyncSession = Depends(get_db)
 ):
     """Soft-deactivates a patient record to prevent future admissions while maintaining legal audit trail."""
@@ -831,7 +831,7 @@ async def deactivate_patient(
 @app.put("/patients/{patient_id}/activate")
 async def activate_patient(
     patient_id: int,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR)),
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.DOCTOR, UserRole.NURSE)),
     db: AsyncSession = Depends(get_db)
 ):
     """Reactivates a patient record for clinical admissions."""
