@@ -40,7 +40,7 @@ test_result.__test__ = False
 
 
 async def register_and_login(client: httpx.AsyncClient, username: str, email: str, full_name: str, role: str, department: str = "EMERGENCY") -> dict:
-    """Register user (idempotent) and login, returning {token, headers, personnel_id}."""
+    # Attempt optional register for backwards compatibility
     await client.post("/auth/register", json={
         "username": username, "email": email, "password": TEST_PASSWORD,
         "full_name": full_name, "role": role, "department": department
@@ -70,7 +70,20 @@ async def run_all_tests():
         await conn.execute("DELETE FROM bed_allocation;")
         await conn.execute("UPDATE bed SET status = 'AVAILABLE', version = 1;")
         await conn.execute("UPDATE equipment SET status = 'AVAILABLE', version = 1;")
-        await conn.execute("UPDATE personnel SET is_active = true WHERE email IN ('carol@hospital.org', 'bob@hospital.org', 'alice@hospital.org');")
+        # Seed or refresh test personnel with valid bcrypt hash matching TEST_PASSWORD
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        hashed_pw = pwd_context.hash(TEST_PASSWORD)
+
+        await conn.execute("""
+            INSERT INTO personnel (username, email, hashed_password, full_name, role, department, is_active, must_change_password)
+            VALUES 
+                ('nurse_carol', 'carol@hospital.org', $1, 'Carol Danvers, RN', 'NURSE', 'EMERGENCY', true, false),
+                ('cleaner_bob', 'bob@hospital.org', $1, 'Bob Martinez, EVS', 'CLEANING_CREW', 'ENVIRONMENTAL_SERVICES', true, false),
+                ('doctor_alice', 'alice@hospital.org', $1, 'Dr. Alice Chen, MD', 'DOCTOR', 'EMERGENCY', true, false)
+            ON CONFLICT (email) DO UPDATE 
+                SET is_active = true, must_change_password = false, hashed_password = EXCLUDED.hashed_password;
+        """, hashed_pw)
     finally:
         await conn.close()
 

@@ -102,6 +102,7 @@ jobs:
         env:
           PYTHONPATH: services/auth-service
           SECRET_KEY: test-secret-key-for-ci-pipeline-1234567890
+          DATABASE_URL: postgresql+asyncpg://hip_admin:dummy@localhost:5432/hospital_intelligence
         run: |
           python test_password_reset_workflow.py
 
@@ -134,6 +135,7 @@ jobs:
           GATEWAY_URL=http://localhost:8080
           TEST_PG_DSN=postgresql://hip_admin:ci_password_123@localhost:5431/hospital_intelligence
           TEST_USER_PASSWORD=SecurePassword123!
+          INITIAL_ADMIN_PASSWORD=SecurePassword123!
           EOF
 
       - name: Start Database, Cache, and Microservices Stack
@@ -157,7 +159,7 @@ jobs:
 
       - name: Install Integration Test Client Dependencies
         run: |
-          pip install httpx asyncpg python-dotenv
+          pip install httpx asyncpg python-dotenv passlib bcrypt
 
       - name: Execute End-to-End RBAC, DB Operations & Concurrency Test Suite
         env:
