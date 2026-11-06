@@ -159,7 +159,7 @@ jobs:
 
       - name: Install Integration Test Client Dependencies
         run: |
-          pip install httpx asyncpg python-dotenv passlib bcrypt
+          pip install httpx python-dotenv -r services/auth-service/requirements.txt
 
       - name: Execute End-to-End RBAC, DB Operations & Concurrency Test Suite
         env:
