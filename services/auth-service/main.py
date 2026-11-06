@@ -405,7 +405,12 @@ async def login_personnel(
         # ── FULL TOKEN: normal login flow ──
         token_data = {
             "sub": str(personnel.personnel_id),
+            "personnel_id": personnel.personnel_id,
+            "username": personnel.username,
+            "full_name": personnel.full_name,
             "role": personnel.role,
+            "department": personnel.department,
+            "must_change_password": False,
         }
         access_token = create_access_token(token_data)
 
@@ -486,7 +491,15 @@ async def force_reset_password(
         await revoke_all_user_tokens(db, user_id)
 
         # Issue fresh full tokens
-        token_data = {"sub": str(user_id), "role": personnel.role}
+        token_data = {
+            "sub": str(user_id),
+            "personnel_id": user_id,
+            "username": personnel.username,
+            "full_name": personnel.full_name,
+            "role": personnel.role,
+            "department": personnel.department,
+            "must_change_password": False,
+        }
         access_token = create_access_token(token_data)
         raw_refresh = create_refresh_token()
         db.add(models.RefreshToken(
@@ -759,7 +772,12 @@ async def refresh_token(
     # Issue new tokens
     token_data = {
         "sub": str(personnel.personnel_id),
+        "personnel_id": personnel.personnel_id,
+        "username": personnel.username,
+        "full_name": personnel.full_name,
         "role": personnel.role,
+        "department": personnel.department,
+        "must_change_password": False,
     }
     new_access_token = create_access_token(token_data)
     new_raw_refresh = create_refresh_token()

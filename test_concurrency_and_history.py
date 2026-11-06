@@ -76,13 +76,17 @@ async def run_all_tests():
         hashed_pw = pwd_context.hash(TEST_PASSWORD)
 
         await conn.execute("""
+            DELETE FROM personnel 
+            WHERE username IN ('nurse_carol', 'cleaner_bob', 'doctor_alice', 'nurse_jane')
+               OR email IN ('carol@hospital.org', 'bob@hospital.org', 'alice@hospital.org', 'nurse_jane@hospital.org');
+        """)
+        await conn.execute("""
             INSERT INTO personnel (username, email, hashed_password, full_name, role, department, is_active, must_change_password)
             VALUES 
                 ('nurse_carol', 'carol@hospital.org', $1, 'Carol Danvers, RN', 'NURSE', 'EMERGENCY', true, false),
                 ('cleaner_bob', 'bob@hospital.org', $1, 'Bob Martinez, EVS', 'CLEANING_CREW', 'ENVIRONMENTAL_SERVICES', true, false),
-                ('doctor_alice', 'alice@hospital.org', $1, 'Dr. Alice Chen, MD', 'DOCTOR', 'EMERGENCY', true, false)
-            ON CONFLICT (email) DO UPDATE 
-                SET is_active = true, must_change_password = false, hashed_password = EXCLUDED.hashed_password;
+                ('doctor_alice', 'alice@hospital.org', $1, 'Dr. Alice Chen, MD', 'DOCTOR', 'EMERGENCY', true, false),
+                ('nurse_jane', 'nurse_jane@hospital.org', $1, 'Jane Foster, RN', 'NURSE', 'EMERGENCY', true, false);
         """, hashed_pw)
     finally:
         await conn.close()

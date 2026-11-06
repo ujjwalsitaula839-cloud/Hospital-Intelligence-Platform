@@ -164,9 +164,12 @@ jobs:
       - name: Execute End-to-End RBAC, DB Operations & Concurrency Test Suite
         env:
           GATEWAY_URL: http://localhost:8080
+          MAILPIT_HTTP_URL: http://localhost:8025
           TEST_PG_DSN: postgresql://hip_admin:ci_password_123@localhost:5431/hospital_intelligence
           TEST_USER_PASSWORD: SecurePassword123!
+          PYTHONPATH: services/auth-service
         run: |
+          python test_password_reset_workflow.py
           python test_concurrency_and_history.py
 
       - name: Dump Container Logs on Failure
