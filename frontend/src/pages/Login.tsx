@@ -8,17 +8,17 @@ interface SavedShortcut {
   id: string;
   name: string;
   email: string;
-  password: string;
+  password?: string;
   role: string;
   icon: string;
   isCustom?: boolean;
 }
 
 const DEFAULT_SHORTCUTS: SavedShortcut[] = [
-  { id: 'admin', name: 'Administrator', email: 'admin@hospital.org', password: '[PASSWORD]', role: 'ADMIN', icon: '🛡️' },
-  { id: 'nurse', name: 'Clinical Nurse', email: 'nurse_jane@hospital.org', password: '[PASSWORD]', role: 'NURSE', icon: '🩺' },
-  { id: 'doctor', name: 'Attending Doctor', email: 'dr_smith@hospital.org', password: '[PASSWORD]', role: 'DOCTOR', icon: '👨‍⚕️' },
-  { id: 'cleaner', name: 'Housekeeping', email: 'cleaner_bob@hospital.org', password: '[PASSWORD]', role: 'CLEANING_CREW', icon: '🧹' },
+  { id: 'admin', name: 'Administrator', email: 'admin@hospital.org', password: '', role: 'ADMIN', icon: '🛡️' },
+  { id: 'nurse', name: 'Clinical Nurse', email: 'nurse_carol@hospital.org', password: '', role: 'NURSE', icon: '🩺' },
+  { id: 'doctor', name: 'Attending Doctor', email: 'doctor_chen@hospital.org', password: '', role: 'DOCTOR', icon: '👨‍⚕️' },
+  { id: 'cleaner', name: 'Housekeeping', email: 'cleaner_bob@hospital.org', password: '', role: 'CLEANING_CREW', icon: '🧹' },
 ];
 
 function getDashboardPath(role: Role): string {
@@ -48,7 +48,16 @@ export default function Login(): React.ReactElement {
       if (stored) {
         const parsed = JSON.parse(stored) as SavedShortcut[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setShortcuts(parsed);
+          const sanitized = parsed.map((item) => {
+            const fallback = DEFAULT_SHORTCUTS.find((d) => d.id === item.id);
+            const needsEmailFix = !item.email || item.email.includes('[') || item.email === 'dr_smith@hospital.org' || item.email === 'nurse_jane@hospital.org';
+            return {
+              ...item,
+              email: needsEmailFix ? (fallback?.email || item.email) : item.email,
+              password: item.password || '',
+            };
+          });
+          setShortcuts(sanitized);
         }
       }
 
@@ -57,8 +66,10 @@ export default function Login(): React.ReactElement {
         const creds = JSON.parse(remembered) as { email: string; password?: string };
         if (creds.email) {
           setUsername(creds.email);
-          if (creds.password) setPassword(creds.password);
-          setRememberMe(true);
+          if (creds.password) {
+            setPassword(creds.password);
+            setRememberMe(true);
+          }
         }
       }
     } catch {
@@ -100,9 +111,11 @@ export default function Login(): React.ReactElement {
     }
   };
 
-  const selectPersona = (userEmail: string, userPass: string) => {
+  const selectPersona = (userEmail: string, userPass?: string) => {
     setUsername(userEmail);
-    setPassword(userPass);
+    if (userPass) {
+      setPassword(userPass);
+    }
     setError(null);
     setSaveSuccessMsg(null);
   };
@@ -317,17 +330,20 @@ export default function Login(): React.ReactElement {
 
         {/* Customizable 1-Click Role Quick Fill Shortcuts */}
         <div className="mt-6 pt-4 border-t border-zinc-800/80">
-          {shortcuts.some((s) => s.isCustom) && (
-            <div className="flex justify-end mb-2 font-mono text-[10px]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">
+              1-Click Role Quick Fill (Identity Pre-fill)
+            </span>
+            {shortcuts.some((s) => s.isCustom) && (
               <button
                 type="button"
                 onClick={resetShortcuts}
-                className="text-zinc-500 hover:text-zinc-300 underline"
+                className="text-zinc-500 hover:text-zinc-300 underline font-mono text-[10px]"
               >
                 Reset Defaults
               </button>
-            </div>
-          )}
+            )}
+          </div>
 
           <div className="grid grid-cols-2 gap-1.5 font-mono text-xs">
             {shortcuts.map((s) => (

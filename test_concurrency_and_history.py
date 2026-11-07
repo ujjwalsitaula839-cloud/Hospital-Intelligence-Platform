@@ -3,11 +3,12 @@ import os
 from pathlib import Path
 import httpx
 import asyncpg
-from dotenv import load_dotenv
-
-# Load local environment variables from .env
-root_dir = Path(__file__).resolve().parent
-load_dotenv(root_dir / ".env")
+try:
+    from dotenv import load_dotenv
+    root_dir = Path(__file__).resolve().parent
+    load_dotenv(root_dir / ".env")
+except ImportError:
+    pass
 
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8080")
 
@@ -20,7 +21,7 @@ pg_port = os.getenv("POSTGRES_PORT", "5431")
 
 default_pg_dsn = f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
 PG_DSN = os.getenv("TEST_PG_DSN", default_pg_dsn)
-TEST_PASSWORD = os.getenv("TEST_USER_PASSWORD", "SecurePassword123!")
+TEST_PASSWORD = os.getenv("TEST_USER_PASSWORD", "TestPassword123!")
 
 passed = 0
 failed = 0
@@ -71,22 +72,26 @@ async def run_all_tests():
         await conn.execute("UPDATE bed SET status = 'AVAILABLE', version = 1;")
         await conn.execute("UPDATE equipment SET status = 'AVAILABLE', version = 1;")
         # Seed or refresh test personnel with valid bcrypt hash matching TEST_PASSWORD
-        from passlib.context import CryptContext
-        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-        hashed_pw = pwd_context.hash(TEST_PASSWORD)
+        try:
+            from passlib.context import CryptContext
+            pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+            hashed_pw = pwd_context.hash(TEST_PASSWORD)
+        except ImportError:
+            # Bcrypt hash for TestPassword123!
+            hashed_pw = "$2b$12$/8LclTB2Z1MZvRY/c.npF.xEY99BYJI4GhV2kfyXRWdNJokzvprEa"
 
         await conn.execute("""
             DELETE FROM personnel 
-            WHERE username IN ('nurse_carol', 'cleaner_bob', 'doctor_alice', 'nurse_jane')
-               OR email IN ('carol@hospital.org', 'bob@hospital.org', 'alice@hospital.org', 'nurse_jane@hospital.org');
+            WHERE username IN ('test_carol', 'test_bob', 'test_alice', 'test_jane')
+               OR email IN ('carol@hospital.org', 'bob@hospital.org', 'alice@hospital.org', 'test_jane@hospital.org');
         """)
         await conn.execute("""
             INSERT INTO personnel (username, email, hashed_password, full_name, role, department, is_active, must_change_password)
             VALUES 
-                ('nurse_carol', 'carol@hospital.org', $1, 'Carol Danvers, RN', 'NURSE', 'EMERGENCY', true, false),
-                ('cleaner_bob', 'bob@hospital.org', $1, 'Bob Martinez, EVS', 'CLEANING_CREW', 'ENVIRONMENTAL_SERVICES', true, false),
-                ('doctor_alice', 'alice@hospital.org', $1, 'Dr. Alice Chen, MD', 'DOCTOR', 'EMERGENCY', true, false),
-                ('nurse_jane', 'nurse_jane@hospital.org', $1, 'Jane Foster, RN', 'NURSE', 'EMERGENCY', true, false);
+                ('test_carol', 'carol@hospital.org', $1, 'Carol Danvers, RN', 'NURSE', 'EMERGENCY', true, false),
+                ('test_bob', 'bob@hospital.org', $1, 'Bob Martinez, EVS', 'CLEANING_CREW', 'ENVIRONMENTAL_SERVICES', true, false),
+                ('test_alice', 'alice@hospital.org', $1, 'Dr. Alice Chen, MD', 'DOCTOR', 'EMERGENCY', true, false),
+                ('test_jane', 'test_jane@hospital.org', $1, 'Jane Foster, RN', 'NURSE', 'EMERGENCY', true, false);
         """, hashed_pw)
     finally:
         await conn.close()
@@ -97,9 +102,9 @@ async def run_all_tests():
         # SETUP: Register 3 staff members with different roles
         # =========================================================
         print("\n--- SETUP: Registering staff members ---")
-        nurse = await register_and_login(client, "nurse_carol", "carol@hospital.org", "Carol Danvers, RN", "NURSE")
-        cleaner = await register_and_login(client, "cleaner_bob", "bob@hospital.org", "Bob Martinez, EVS", "CLEANING_CREW", "ENVIRONMENTAL_SERVICES")
-        doctor = await register_and_login(client, "doctor_alice", "alice@hospital.org", "Dr. Alice Chen, MD", "DOCTOR")
+        nurse = await register_and_login(client, "test_carol", "carol@hospital.org", "Carol Danvers, RN", "NURSE")
+        cleaner = await register_and_login(client, "test_bob", "bob@hospital.org", "Bob Martinez, EVS", "CLEANING_CREW", "ENVIRONMENTAL_SERVICES")
+        doctor = await register_and_login(client, "test_alice", "alice@hospital.org", "Dr. Alice Chen, MD", "DOCTOR")
         print(f"  Nurse Carol (ID: {nurse['personnel_id']}), Cleaner Bob (ID: {cleaner['personnel_id']}), Doctor Alice (ID: {doctor['personnel_id']})")
 
         # Initialize Bed Grid (triggers seed if empty)
@@ -376,6 +381,68 @@ async def run_all_tests():
         res = await client.get("/beds/cleaning/tasks", headers=doctor["headers"])
         test_result("Doctor Alice -> GET /beds/cleaning/tasks -> HTTP 403 (DOCTOR not in CLEANING_CREW|NURSE|ADMIN)",
                      res.status_code == 403, f"Got {res.status_code}")
+
+        # =========================================================
+        # TEST 13: LangChain Bed & Equipment Recommendation + 1-Click Atomic Reservation
+        # =========================================================
+        print("\n--- TEST 13: LangChain Bed Recommendation Engine & Atomic Reservation ---")
+        # 13a. Unauthorized role (Cleaner Bob) should be rejected with 403
+        triage_payload = {
+            "patient": {
+                "full_name": "Test Trauma Patient",
+                "age": 34,
+                "gender": "M",
+                "acuity_level": "ESI_1",
+                "chief_complaint": "Polytrauma post motor vehicle accident",
+                "primary_diagnosis": "Severe Traumatic Brain Injury and Hemorrhagic Shock",
+                "systolic_bp": 80,
+                "diastolic_bp": 50,
+                "heart_rate": 138,
+                "respiratory_rate": 32,
+                "oxygen_saturation": 87.0,
+                "requires_isolation": False,
+                "requires_bariatric": False,
+            },
+            "max_candidate_beds": 8
+        }
+        res_unauth = await client.post("/beds/recommend", json=triage_payload, headers=cleaner["headers"])
+        test_result("Cleaner Bob -> POST /beds/recommend -> HTTP 403 Forbidden", res_unauth.status_code == 403, f"Got {res_unauth.status_code}")
+
+        # 13b. Authorized role (Doctor Alice) requests bed recommendation
+        rec_res = await client.post("/beds/recommend", json=triage_payload, headers=doctor["headers"])
+        test_result("Doctor Alice -> POST /beds/recommend -> HTTP 200 OK", rec_res.status_code == 200, f"Got {rec_res.status_code}: {rec_res.text}")
+
+        rec_data = rec_res.json()
+        recommendation = rec_data.get("recommendation", {})
+        recommended_code = recommendation.get("recommended_bed_code")
+        candidate_codes = [c["bed_code"] for c in rec_data.get("candidates_pool", [])]
+
+        test_result("Recommendation has valid structure", bool(recommended_code and recommendation.get("clinical_rationale")), f"Keys: {rec_data.keys()}")
+        test_result("Anti-hallucination: Recommended bed is in closed candidate pool", recommended_code in candidate_codes, f"Code '{recommended_code}' not in {candidate_codes}")
+        test_result("Confidence score within valid bounds [0.0, 1.0]", 0.0 <= recommendation.get("confidence_score", -1) <= 1.0)
+
+        # 13c. 1-Click Accept & Reserve recommended bed with equipment staging
+        # Find candidate bed version
+        chosen_candidate = next((c for c in rec_data.get("candidates_pool", []) if c["bed_code"] == recommended_code), None)
+        expected_ver = chosen_candidate["version"] if chosen_candidate else 1
+
+        # Check available equipment for prestaging
+        avail_eq_items = [e["equipment_id"] for e in rec_data.get("available_equipment", [])[:2]]
+
+        reserve_payload = {
+            "bed_code": recommended_code,
+            "expected_version": expected_ver,
+            "patient_id": test_patients[8]["patient_id"],
+            "acuity_level": "ESI_1",
+            "primary_diagnosis": "Severe Traumatic Brain Injury",
+            "prestage_equipment_ids": avail_eq_items
+        }
+
+        reserve_res = await client.post("/beds/recommend/reserve", json=reserve_payload, headers=doctor["headers"])
+        test_result("Doctor Alice -> POST /beds/recommend/reserve -> HTTP 200 OK", reserve_res.status_code == 200, f"Got {reserve_res.status_code}: {reserve_res.text}")
+
+        reserve_data = reserve_res.json()
+        test_result("Bed successfully reserved with staged equipment", reserve_data.get("status") == "SUCCESS", f"Response: {reserve_data}")
 
     # =========================================================
     # FINAL SUMMARY

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
@@ -7,6 +7,7 @@ import type {
   Admission,
   Bed,
   BedEvent,
+  BedRecommendationResult,
   BedStatus,
   EquipmentItem,
   Observation,
@@ -228,6 +229,14 @@ export default function Clinical(): React.ReactElement {
   const [assignOccupyImmediately, setAssignOccupyImmediately] = useState(false);
   const [isAssigningBed, setIsAssigningBed] = useState(false);
   const [assignBedError, setAssignBedError] = useState<string | null>(null);
+
+  // LangChain AI Bed Recommendation State & Eager Pre-fetch Cache
+  const emsRecommendationCache = useRef<Record<string, BedRecommendationResult>>({});
+  const [emsAiLoading, setEmsAiLoading] = useState(false);
+  const [emsAiRecommendation, setEmsAiRecommendation] = useState<BedRecommendationResult | null>(null);
+  const [emsAiApproved, setEmsAiApproved] = useState(true);
+  const [emsSelectedEquipmentIds, setEmsSelectedEquipmentIds] = useState<number[]>([]);
+  const [emsAiError, setEmsAiError] = useState<string | null>(null);
 
   // Admission Drawer Form State
   const [admitSearchQuery, setAdmitSearchQuery] = useState('');
@@ -520,6 +529,174 @@ export default function Clinical(): React.ReactElement {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // Helper to compile triage info payload for bed recommendation
+  const buildEmsRecommendationPayload = useCallback(async (item: NonNullable<typeof assigningEmsItem>) => {
+    const notes = (item.admission?.notes || '').toLowerCase();
+    const complaint = (item.admission?.primary_diagnosis || '').toLowerCase();
+
+    const isIsolation =
+      notes.includes('isolation') ||
+      notes.includes('airborne') ||
+      notes.includes('droplet') ||
+      notes.includes('tuberculosis') ||
+      notes.includes('covid') ||
+      complaint.includes('isolation') ||
+      complaint.includes('tuberculosis') ||
+      complaint.includes('tb');
+
+    const isBariatric =
+      notes.includes('bariatric') ||
+      notes.includes('>160') ||
+      notes.includes('obese') ||
+      notes.includes('heavy-duty') ||
+      complaint.includes('bariatric');
+
+    let vitals: Partial<{
+      heart_rate: number | null;
+      systolic_bp: number | null;
+      diastolic_bp: number | null;
+      oxygen_saturation: number | null;
+      temperature_celsius: number | null;
+      respiratory_rate: number | null;
+    }> = {};
+
+    if (item.admission?.admission_id && item.hasRealAdmission) {
+      try {
+        const obsList = await api.getObservations(item.admission.admission_id);
+        if (obsList && obsList.length > 0) {
+          const latest = obsList[obsList.length - 1];
+          vitals = {
+            heart_rate: latest.heart_rate_bpm,
+            systolic_bp: latest.systolic_bp,
+            diastolic_bp: latest.diastolic_bp,
+            oxygen_saturation: latest.oxygen_saturation_pct,
+            temperature_celsius: latest.temperature_celsius,
+            respiratory_rate: latest.respiratory_rate,
+          };
+        }
+      } catch {
+        // Vitals optional for pre-arrival intake
+      }
+    }
+
+    return {
+      patient: {
+        patient_id: item.patient.patient_id,
+        full_name: `${item.patient.first_name} ${item.patient.last_name}`,
+        age: item.patient.age || 50,
+        gender: item.patient.gender || 'OTHER',
+        acuity_level: item.admission?.acuity_level || 'ESI_3',
+        chief_complaint: item.admission?.primary_diagnosis || 'Emergency Inbound Radio Report',
+        primary_diagnosis: item.admission?.primary_diagnosis || 'Emergency Inbound Radio Report',
+        ...vitals,
+        requires_isolation: isIsolation,
+        requires_bariatric: isBariatric,
+        infection_type: isIsolation ? 'Airborne / Contact Isolation' : undefined,
+      },
+      max_candidate_beds: 10,
+    };
+  }, []);
+
+  // Helper to commit recommendation into modal state
+  const applyEmsRecommendation = useCallback((res: BedRecommendationResult) => {
+    setEmsAiRecommendation(res);
+    setEmsAiApproved(true);
+
+    // Pre-select the recommended bed code if valid
+    if (res.recommendation?.recommended_bed_code) {
+      setAssignTargetBedCode(res.recommendation.recommended_bed_code);
+    }
+
+    // Auto-select matching equipment (max 1 unit per requested equipment type, no crash carts)
+    if (res.available_equipment && res.recommendation?.equipment_to_prestage) {
+      const selectedEquipment: number[] = [];
+      const selectedTypes: string[] = [];
+      for (const prestage of res.recommendation.equipment_to_prestage) {
+        const targetType = (prestage.equipment_type || '').toLowerCase();
+        // Rule 2: Never place Crash Cart in patient room
+        if (targetType.includes('crash cart')) continue;
+        // Rule 1: Never assign more than ONE (1) unit of any primary equipment type
+        if (selectedTypes.some((t) => t.includes(targetType) || targetType.includes(t))) continue;
+
+        const matchedEq = res.available_equipment.find(
+          (eq) =>
+            !selectedEquipment.includes(eq.equipment_id) &&
+            !(eq.equipment_name || '').toLowerCase().includes('crash cart') &&
+            !(eq.equipment_type || '').toLowerCase().includes('crash cart') &&
+            ((eq.equipment_type || '').toLowerCase().includes(targetType) ||
+              targetType.includes((eq.equipment_type || '').toLowerCase()) ||
+              (eq.equipment_name || '').toLowerCase().includes(targetType))
+        );
+        if (matchedEq) {
+          selectedEquipment.push(matchedEq.equipment_id);
+          selectedTypes.push(targetType);
+        }
+      }
+
+      // If no specific protocol items matched, pick at most 1 primary telemetry device if available
+      const safeFallbacks = (res.available_equipment || []).filter(
+        (e) => !(e.equipment_name || '').toLowerCase().includes('crash cart')
+      );
+      setEmsSelectedEquipmentIds(
+        selectedEquipment.length > 0
+          ? selectedEquipment.slice(0, 3)
+          : safeFallbacks.slice(0, 1).map((e) => e.equipment_id)
+      );
+    }
+  }, []);
+
+  // Trigger LangChain Bed Recommendation when an Inbound EMS item is selected for Bed Hold
+  useEffect(() => {
+    if (!assigningEmsItem) {
+      setEmsAiRecommendation(null);
+      setEmsAiLoading(false);
+      setEmsAiError(null);
+      setEmsSelectedEquipmentIds([]);
+      setEmsAiApproved(true);
+      return;
+    }
+
+    const item = assigningEmsItem;
+    const cacheKey = `${item.patient.patient_id}_${item.admission?.acuity_level}_${item.admission?.primary_diagnosis || ''}`;
+    const cached = emsRecommendationCache.current[cacheKey];
+
+    // Sub-10ms instant cache hit if eagerly pre-fetched
+    if (cached) {
+      applyEmsRecommendation(cached);
+      setEmsAiLoading(false);
+      setEmsAiError(null);
+      return;
+    }
+
+    let isMounted = true;
+    const fetchEmsRecommendation = async () => {
+      setEmsAiLoading(true);
+      setEmsAiError(null);
+      setEmsAiRecommendation(null);
+      setEmsAiApproved(true);
+
+      try {
+        const payload = await buildEmsRecommendationPayload(item);
+        const res = await api.recommendBed(payload);
+        if (!isMounted) return;
+        emsRecommendationCache.current[cacheKey] = res;
+        applyEmsRecommendation(res);
+      } catch (err: unknown) {
+        if (!isMounted) return;
+        const msg = err instanceof Error ? err.message : 'AI bed recommendation failed.';
+        setEmsAiError(msg);
+      } finally {
+        if (isMounted) setEmsAiLoading(false);
+      }
+    };
+
+    fetchEmsRecommendation();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [assigningEmsItem, buildEmsRecommendationPayload, applyEmsRecommendation]);
 
   // Debounced Patient Search inside Admission Drawer
   useEffect(() => {
@@ -946,7 +1123,7 @@ export default function Clinical(): React.ReactElement {
 
   // Filtered equipment
   const filteredEquipment = equipmentList.filter((eq) => {
-    const matchesType = eqTypeFilter === 'ALL' || eq.equipment_type.toLowerCase() === eqTypeFilter.toLowerCase();
+    const matchesType = eqTypeFilter === 'ALL' || (eq.equipment_type || '').toLowerCase() === eqTypeFilter.toLowerCase();
     const matchesStatus = eqStatusFilter === 'ALL' || eq.status === eqStatusFilter;
     return matchesType && matchesStatus;
   });
@@ -958,9 +1135,17 @@ export default function Clinical(): React.ReactElement {
   const availableBeds = useMemo(() => beds.filter((b) => b.status === 'AVAILABLE'), [beds]);
 
   // Confirm Bed Hold / Direct Admission for Inbound EMS Patient
-  const handleConfirmEmsBedAssignment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!assigningEmsItem || !assignTargetBedCode) {
+  const handleConfirmEmsBedAssignment = async (
+    e?: React.FormEvent,
+    opts?: { targetBedCode?: string; occupyImmediately?: boolean }
+  ) => {
+    if (e) e.preventDefault();
+    if (!assigningEmsItem) return;
+
+    const chosenBedCode = opts?.targetBedCode || assignTargetBedCode;
+    const shouldOccupy = opts?.occupyImmediately !== undefined ? opts.occupyImmediately : assignOccupyImmediately;
+
+    if (!chosenBedCode) {
       setAssignBedError('Please select a destination bed.');
       return;
     }
@@ -981,14 +1166,29 @@ export default function Clinical(): React.ReactElement {
       }
 
       // Step 1: Reserve the bed with verified admission and patient ID
-      await api.updateBedStatus(assignTargetBedCode, 'RESERVED', {
+      await api.updateBedStatus(chosenBedCode, 'RESERVED', {
         admission_id: admissionId,
         patient_id: assigningEmsItem.patient.patient_id,
       });
 
       // Step 2: If direct admission requested, transition bed to OCCUPIED
-      if (assignOccupyImmediately) {
-        await api.updateBedStatus(assignTargetBedCode, 'OCCUPIED');
+      if (shouldOccupy) {
+        await api.updateBedStatus(chosenBedCode, 'OCCUPIED');
+      }
+
+      // Step 3: If equipment items are selected for pre-staging, allocate them to this bed & admission
+      if (emsSelectedEquipmentIds.length > 0) {
+        for (const eqId of emsSelectedEquipmentIds) {
+          try {
+            await api.allocateEquipment({
+              equipment_id: eqId,
+              admission_id: admissionId,
+              bed_code: chosenBedCode,
+            });
+          } catch (eqErr) {
+            console.warn(`Failed to pre-stage equipment #${eqId}:`, eqErr);
+          }
+        }
       }
 
       // Remove from unassigned recent EMS runs now that bed assignment is complete
@@ -1005,10 +1205,10 @@ export default function Clinical(): React.ReactElement {
       // Optimistically update beds so Bed Matrix immediately reflects the patient and status
       setBeds((prevBeds) =>
         prevBeds.map((b) =>
-          b.bed_code === assignTargetBedCode
+          b.bed_code === chosenBedCode
             ? {
                 ...b,
-                status: assignOccupyImmediately ? 'OCCUPIED' : 'RESERVED',
+                status: shouldOccupy ? 'OCCUPIED' : 'RESERVED',
                 admission_id: admissionId,
                 patient_id: assignedPId,
                 patient_name: assignedPatientName,
@@ -1035,13 +1235,17 @@ export default function Clinical(): React.ReactElement {
 
       const assignNotif: AppNotification = {
         id: `${Date.now()}`,
-        eventType: assignOccupyImmediately ? 'PATIENT_ADMITTED' : 'BED_RESERVED',
-        title: assignOccupyImmediately ? 'Patient Admitted to Bed' : 'Bed Reserved (Hold)',
+        eventType: shouldOccupy ? 'PATIENT_ADMITTED' : 'BED_RESERVED',
+        title: shouldOccupy ? 'Patient Admitted to Bed' : 'Bed Reserved (Hold)',
         message: `${assignedPatientName} was ${
-          assignOccupyImmediately ? 'admitted to' : 'held in'
-        } bed ${assignTargetBedCode}.`,
+          shouldOccupy ? 'admitted to' : 'held in'
+        } bed ${chosenBedCode}${
+          emsSelectedEquipmentIds.length > 0
+            ? ` with ${emsSelectedEquipmentIds.length} equipment item(s) staged.`
+            : '.'
+        }`,
         actor: claims?.full_name || claims?.username || 'Staff',
-        bedCode: assignTargetBedCode,
+        bedCode: chosenBedCode,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         read: false,
       };
@@ -1307,6 +1511,36 @@ export default function Clinical(): React.ReactElement {
       }
     });
   }, [currentTime, emsPatientsList, emsEtaMap]);
+
+  // Eager background pre-fetch for inbound EMS worklist items so recommendation is 0ms instant when clicked
+  useEffect(() => {
+    if (emsPatientsList.length === 0) return;
+    let isSubscribed = true;
+
+    const prefetchInbound = async () => {
+      for (const item of emsPatientsList) {
+        if (!isSubscribed) break;
+        const cacheKey = `${item.patient.patient_id}_${item.admission?.acuity_level}_${item.admission?.primary_diagnosis || ''}`;
+        if (emsRecommendationCache.current[cacheKey]) continue;
+
+        try {
+          const payload = await buildEmsRecommendationPayload(item);
+          const res = await api.recommendBed(payload);
+          if (res && isSubscribed) {
+            emsRecommendationCache.current[cacheKey] = res;
+          }
+        } catch {
+          // Non-blocking background prefetch
+        }
+      }
+    };
+
+    prefetchInbound();
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [emsPatientsList, buildEmsRecommendationPayload]);
 
   const displayedBeds = beds.filter((b) => {
     const matchesDept = bedDeptFilter === 'ALL' || b.department.toUpperCase() === bedDeptFilter.toUpperCase();
@@ -2589,6 +2823,9 @@ export default function Clinical(): React.ReactElement {
 
                         {/* Primary Bed Action: Hold Bed / Admit */}
                         <div className="mt-2.5">
+                          <div className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-1">
+                            Protocol Placement Ready
+                          </div>
                           <button
                             type="button"
                             onClick={() => {
@@ -2657,96 +2894,293 @@ export default function Clinical(): React.ReactElement {
       {/* MODAL: ASSIGN & HOLD BED FOR INBOUND EMS PATIENT */}
       {/* ================================================================= */}
       {assigningEmsItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-hidden">
           <div
             className="fixed inset-0 bg-black/75 backdrop-blur-xs"
             onClick={() => setAssigningEmsItem(null)}
           />
-          <div className="relative z-10 w-full max-w-lg bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 p-6 shadow-2xl rounded-xl">
-            {/* Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-zinc-800 mb-5">
+          <div className="relative z-10 w-full max-w-xl max-h-[90vh] bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 shadow-2xl rounded-xl flex flex-col overflow-hidden">
+            {/* 1. Header (Fixed at top) */}
+            <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-zinc-800 shrink-0 flex items-center justify-between bg-white dark:bg-zinc-900">
               <div>
-                <span className="text-[10px] font-mono uppercase tracking-wider text-amber-600 dark:text-amber-400 font-bold">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
                   Ambulance Pre-Arrival Dispatch
                 </span>
-                <h3 className="text-xl font-bold font-mono text-slate-900 dark:text-white">
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
                   Hold Bed for Inbound Patient
                 </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setAssigningEmsItem(null)}
-                className="text-slate-400 hover:text-slate-600 dark:text-zinc-400 dark:hover:text-white text-sm font-mono p-1"
+                className="text-slate-400 hover:text-slate-700 dark:text-zinc-400 dark:hover:text-white text-base p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
                 aria-label="Close"
               >
                 ✕
               </button>
             </div>
 
-            {assignBedError && (
-              <div className="mb-4 p-3 bg-red-50 dark:bg-red-950 border border-red-300 dark:border-red-800 text-red-800 dark:text-red-200 text-xs font-mono rounded">
-                {assignBedError}
-              </div>
-            )}
-
-            {/* Patient Summary Card */}
-            <div className="p-3.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-lg mb-4 text-xs font-mono space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="font-bold text-slate-900 dark:text-white text-sm">
-                  {assigningEmsItem.patient.first_name} {assigningEmsItem.patient.last_name}
-                </span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
-                  {assigningEmsItem.admission.acuity_level}
-                </span>
-              </div>
-              <div className="text-slate-600 dark:text-zinc-400 text-[11px]">
-                MRN #{assigningEmsItem.patient.patient_id} · DOB: {assigningEmsItem.patient.date_of_birth} · {assigningEmsItem.patient.gender}
-              </div>
-              {assigningEmsItem.admission.primary_diagnosis && (
-                <div className="text-slate-700 dark:text-zinc-300 text-[11px] truncate">
-                  Complaint: {assigningEmsItem.admission.primary_diagnosis}
+            {/* 2. Scrollable Body Container */}
+            <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4">
+              {assignBedError && (
+                <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-300 dark:border-red-800 text-red-800 dark:text-red-200 text-xs rounded-lg">
+                  {assignBedError}
                 </div>
               )}
-            </div>
 
-            {/* Form */}
-            <form onSubmit={handleConfirmEmsBedAssignment} className="space-y-4">
-              {/* Available Bed Selector */}
-              <div>
+              {/* Patient Summary Card */}
+              <div className="p-3.5 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-lg text-xs space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-slate-900 dark:text-white text-sm">
+                    {assigningEmsItem.patient.first_name} {assigningEmsItem.patient.last_name}
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                      assigningEmsItem.admission.acuity_level === 'ESI_1'
+                        ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200 border-red-300 dark:border-red-800'
+                        : assigningEmsItem.admission.acuity_level === 'ESI_2'
+                        ? 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200 border-orange-300 dark:border-orange-800'
+                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200 border-amber-300 dark:border-amber-700'
+                    }`}
+                  >
+                    {assigningEmsItem.admission.acuity_level?.replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="text-slate-600 dark:text-zinc-400 text-[11px]">
+                  MRN #{assigningEmsItem.patient.patient_id} · DOB: {assigningEmsItem.patient.date_of_birth} · {assigningEmsItem.patient.gender}
+                </div>
+                {assigningEmsItem.admission.primary_diagnosis && (
+                  <div className="text-slate-700 dark:text-zinc-300 text-[11px]">
+                    <span className="font-semibold text-slate-900 dark:text-zinc-200">Chief Complaint: </span>
+                    {assigningEmsItem.admission.primary_diagnosis}
+                  </div>
+                )}
+              </div>
+
+              {/* CLINICAL DECISION SUPPORT SECTION */}
+              {emsAiLoading && (
+                <div className="p-4 bg-slate-50 dark:bg-zinc-800/40 border border-slate-200 dark:border-zinc-700 rounded-lg flex items-center space-x-3 text-xs text-slate-700 dark:text-zinc-300">
+                  <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin shrink-0" />
+                  <div>
+                    <div className="font-bold text-slate-900 dark:text-white">
+                      Evaluating Clinical Bed Placement...
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-zinc-400">
+                      Analyzing patient acuity ({assigningEmsItem.admission.acuity_level?.replace('_', ' ')}), clinical complaints, and department availability.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {emsAiError && (
+                <div className="p-3 bg-slate-100 dark:bg-zinc-800/60 border border-slate-300 dark:border-zinc-700 text-slate-800 dark:text-zinc-300 text-xs rounded-lg flex items-start space-x-2">
+                  <span className="font-bold text-amber-600 dark:text-amber-400">Notice:</span>
+                  <div className="flex-1">
+                    Automated recommendation unavailable ({emsAiError}). Please select a destination bed manually below.
+                  </div>
+                </div>
+              )}
+
+              {emsAiRecommendation && (
+                <div className="bg-slate-50/80 dark:bg-zinc-950/70 border border-slate-200 dark:border-zinc-800 rounded-xl p-4 space-y-3.5">
+                  {/* Card Title & Protocol Badge */}
+                  <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-zinc-800/80">
+                    <div className="flex items-center space-x-2">
+                      <span className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400" />
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-zinc-200">
+                        Clinical Protocol Recommendation
+                      </span>
+                    </div>
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-zinc-400">
+                      Match Confidence: <strong className="text-slate-900 dark:text-white">{(emsAiRecommendation.recommendation.confidence_score * 100).toFixed(0)}%</strong>
+                    </span>
+                  </div>
+
+                  {/* Bed Details & Immediate Action Banner */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-white dark:bg-zinc-900 rounded-lg border border-slate-200 dark:border-zinc-800 shadow-xs">
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xl font-bold font-mono text-slate-900 dark:text-white">
+                          {emsAiRecommendation.recommendation.recommended_bed_code}
+                        </span>
+                        <span className="px-2 py-0.5 text-[11px] font-semibold bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 rounded border border-slate-200 dark:border-zinc-700">
+                          {emsAiRecommendation.recommendation.department}
+                        </span>
+                        <span className="px-2 py-0.5 text-[11px] font-medium bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 rounded border border-slate-200 dark:border-zinc-700 font-mono">
+                          {emsAiRecommendation.recommendation.bed_type}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-zinc-400">
+                        Status:{' '}
+                        <strong className={emsAiRecommendation.recommendation.is_immediate_ready ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>
+                          {emsAiRecommendation.recommendation.is_immediate_ready ? 'Available · Ready for Patient' : 'Dirty · Housekeeping Required'}
+                        </strong>
+                      </div>
+                    </div>
+
+                    {/* Quick Acceptance / Selection Control */}
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => handleConfirmEmsBedAssignment(undefined, {
+                          targetBedCode: emsAiRecommendation.recommendation.recommended_bed_code,
+                        })}
+                        disabled={isAssigningBed}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-xs rounded-lg transition-colors shadow-xs flex items-center space-x-1.5"
+                        title="Directly reserve this recommended bed and stage equipment"
+                      >
+                        <span>✓</span>
+                        <span>{isAssigningBed ? 'Reserving...' : `Hold Bed ${emsAiRecommendation.recommendation.recommended_bed_code}`}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEmsAiApproved(false);
+                          const el = document.getElementById('destination_bed_select');
+                          if (el) el.focus();
+                        }}
+                        className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 text-xs font-semibold rounded-lg border border-slate-300 dark:border-zinc-700 transition-colors"
+                      >
+                        Choose Other Bed...
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Clinical Rationale */}
+                  <div className="text-xs text-slate-700 dark:text-zinc-300 leading-relaxed bg-white dark:bg-zinc-900/60 p-3 rounded-lg border border-slate-200 dark:border-zinc-800">
+                    <span className="font-semibold text-slate-900 dark:text-white">Clinical Rationale: </span>
+                    {emsAiRecommendation.recommendation.clinical_rationale}
+                  </div>
+
+                  {/* Clinical Advisory */}
+                  {emsAiRecommendation.recommendation.warning_advisories && emsAiRecommendation.recommendation.warning_advisories.length > 0 && (
+                    <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-lg text-xs text-amber-900 dark:text-amber-200">
+                      <span className="font-semibold">Clinical Advisory: </span>
+                      {emsAiRecommendation.recommendation.warning_advisories.join(' ')}
+                    </div>
+                  )}
+
+                  {/* Pre-Staged Equipment Checklist */}
+                  {emsAiRecommendation.available_equipment && emsAiRecommendation.available_equipment.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex items-center justify-between text-xs font-semibold text-slate-800 dark:text-zinc-200">
+                        <span>Pre-Staged Equipment</span>
+                        <span className="text-[11px] text-slate-500 dark:text-zinc-400 font-normal">
+                          {emsSelectedEquipmentIds.length} item{emsSelectedEquipmentIds.length === 1 ? '' : 's'} staged
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        {emsAiRecommendation.available_equipment
+                          .filter((eq, idx, arr) => {
+                            // Rule 2: Never place Crash Cart in individual patient room
+                            const eqName = (eq.equipment_name || '').toLowerCase();
+                            const eqType = (eq.equipment_type || '').toLowerCase();
+                            if (eqName.includes('crash cart') || eqType.includes('crash cart')) return false;
+
+                            // Rule 1: Max 1 unit per equipment type in checklist
+                            const firstIdx = arr.findIndex((item) => (item.equipment_type || '').toLowerCase() === eqType);
+                            if (firstIdx !== idx && !emsSelectedEquipmentIds.includes(eq.equipment_id)) return false;
+
+                            if (emsSelectedEquipmentIds.includes(eq.equipment_id)) return true;
+                            const prestageTypes = (emsAiRecommendation.recommendation?.equipment_to_prestage || []).map((p) =>
+                              (p.equipment_type || '').toLowerCase()
+                            );
+                            return prestageTypes.some((t) =>
+                              eqName.includes(t) || eqType.includes(t)
+                            );
+                          })
+                          .slice(0, 3)
+                          .map((eq) => {
+                            const isChecked = emsSelectedEquipmentIds.includes(eq.equipment_id);
+                            return (
+                              <label
+                                key={eq.equipment_id}
+                                className={`flex items-center space-x-2.5 p-2 rounded-lg cursor-pointer border text-xs transition-colors ${
+                                  isChecked
+                                    ? 'bg-blue-50/70 dark:bg-blue-950/30 border-blue-200 dark:border-blue-900/60 text-blue-950 dark:text-blue-100'
+                                    : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-700 dark:text-zinc-400'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => {
+                                    setEmsSelectedEquipmentIds((prev) =>
+                                      prev.includes(eq.equipment_id)
+                                        ? prev.filter((id) => id !== eq.equipment_id)
+                                        : [...prev, eq.equipment_id]
+                                    );
+                                  }}
+                                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="font-semibold text-slate-900 dark:text-white">{eq.equipment_name}</span>
+                                <span className="text-[11px] text-slate-500 dark:text-zinc-400 font-mono">({eq.serial_number})</span>
+                              </label>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Destination Bed Selector */}
+              <div className="space-y-1.5 pt-1">
                 <label
                   htmlFor="destination_bed_select"
-                  className="block text-xs font-mono uppercase tracking-wider text-slate-700 dark:text-zinc-300 mb-1.5 font-bold"
+                  className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-300"
                 >
                   Select Destination Bed (Available Inventory):
                 </label>
                 {availableBeds.length === 0 ? (
-                  <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 text-xs rounded">
-                    ⚠️ No hospital beds are currently in AVAILABLE state. Discharge an occupied bed or assign housekeeping.
+                  <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 text-xs rounded-lg">
+                    No hospital beds are currently in AVAILABLE state.
                   </div>
                 ) : (
                   <select
                     id="destination_bed_select"
                     value={assignTargetBedCode}
-                    onChange={(e) => setAssignTargetBedCode(e.target.value)}
+                    onChange={(e) => {
+                      const code = e.target.value;
+                      setAssignTargetBedCode(code);
+                      if (emsAiRecommendation) {
+                        setEmsAiApproved(code === emsAiRecommendation.recommendation.recommended_bed_code);
+                      }
+                    }}
                     required
-                    className="w-full bg-white dark:bg-zinc-950 border border-slate-300 dark:border-zinc-800 p-2.5 text-slate-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono text-xs"
+                    className="w-full bg-white dark:bg-zinc-950 border border-slate-300 dark:border-zinc-800 p-2.5 text-slate-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs font-mono"
                   >
                     <option value="">Select an available bed...</option>
-                    {availableBeds.map((b) => (
-                      <option key={b.bed_id} value={b.bed_code}>
-                        {b.bed_code} — Room {b.room_number} ({b.department} · {b.bed_type})
-                      </option>
-                    ))}
+                    {availableBeds.map((b) => {
+                      const isRecommended = emsAiRecommendation?.recommendation.recommended_bed_code === b.bed_code;
+                      return (
+                        <option key={b.bed_id} value={b.bed_code}>
+                          {isRecommended ? '[Recommended] ' : ''}
+                          {b.bed_code} — Room {b.room_number} ({b.department} · {b.bed_type})
+                        </option>
+                      );
+                    })}
                   </select>
                 )}
+                <div className="text-[11px] font-medium pt-0.5">
+                  {emsAiApproved && emsAiRecommendation?.recommendation.recommended_bed_code === assignTargetBedCode ? (
+                    <span className="text-emerald-700 dark:text-emerald-400">
+                      Protocol Recommended Bed {assignTargetBedCode} selected ({(emsAiRecommendation.recommendation.confidence_score * 100).toFixed(0)}% match)
+                    </span>
+                  ) : (
+                    <span className="text-slate-600 dark:text-zinc-400">
+                      Manual Override Active{assignTargetBedCode ? `: ${assignTargetBedCode} selected` : ' (select bed)'}
+                    </span>
+                  )}
+                </div>
               </div>
 
-              {/* Action Type: Hold vs Direct Admit */}
-              <div className="space-y-2 pt-1">
-                <label className="block text-xs font-mono uppercase tracking-wider text-slate-700 dark:text-zinc-300 font-bold">
+              {/* Bed Status Action: Hold vs Direct Admit */}
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-300">
                   Bed Status Action:
                 </label>
-                <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                <div className="grid grid-cols-2 gap-2 text-xs">
                   <button
                     type="button"
                     onClick={() => setAssignOccupyImmediately(false)}
@@ -2756,9 +3190,9 @@ export default function Clinical(): React.ReactElement {
                         : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:border-slate-300'
                     }`}
                   >
-                    <div className="font-bold">⏳ Hold Bed (RESERVED)</div>
-                    <div className="text-[10px] mt-1 opacity-80">
-                      Reserve bay while ambulance en route.
+                    <div className="font-bold">Hold Bed (RESERVED)</div>
+                    <div className="text-[11px] mt-0.5 opacity-80">
+                      Reserve bay while ambulance is en route.
                     </div>
                   </button>
                   <button
@@ -2766,40 +3200,41 @@ export default function Clinical(): React.ReactElement {
                     onClick={() => setAssignOccupyImmediately(true)}
                     className={`p-3 border rounded-lg text-left transition-all ${
                       assignOccupyImmediately
-                        ? 'bg-sky-50 border-sky-500 text-sky-950 dark:bg-sky-950/60 dark:border-sky-600 dark:text-sky-200 ring-2 ring-sky-500/30'
+                        ? 'bg-blue-50 border-blue-500 text-blue-950 dark:bg-blue-950/60 dark:border-blue-600 dark:text-blue-200 ring-2 ring-blue-500/30'
                         : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:border-slate-300'
                     }`}
                   >
-                    <div className="font-bold">👤 Direct Admit (OCCUPIED)</div>
-                    <div className="text-[10px] mt-1 opacity-80">
-                      Patient physically at ED bay right now.
+                    <div className="font-bold">Direct Admit (OCCUPIED)</div>
+                    <div className="text-[11px] mt-0.5 opacity-80">
+                      Patient physically at bay right now.
                     </div>
                   </button>
                 </div>
               </div>
+            </div>
 
-              {/* Modal Buttons */}
-              <div className="flex space-x-3 pt-3 border-t border-slate-200 dark:border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setAssigningEmsItem(null)}
-                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 dark:border-zinc-700 py-2.5 font-bold uppercase tracking-wider text-xs rounded transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isAssigningBed || !assignTargetBedCode}
-                  className="flex-1 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-zinc-950 py-2.5 font-bold uppercase tracking-wider text-xs rounded transition-colors shadow-sm"
-                >
-                  {isAssigningBed
-                    ? 'Assigning Bed...'
-                    : assignOccupyImmediately
-                    ? 'Admit Patient to Bed'
-                    : 'Confirm Bed Hold'}
-                </button>
-              </div>
-            </form>
+            {/* 3. STICKY FOOTER (Always visible!) */}
+            <div className="p-4 border-t border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-900 shrink-0 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setAssigningEmsItem(null)}
+                className="px-4 py-2 bg-white dark:bg-zinc-800 hover:bg-slate-100 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 text-xs font-semibold rounded-lg border border-slate-300 dark:border-zinc-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleConfirmEmsBedAssignment()}
+                disabled={isAssigningBed || !assignTargetBedCode}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-xs rounded-lg transition-colors shadow-sm"
+              >
+                {isAssigningBed
+                  ? 'Assigning Bed...'
+                  : assignOccupyImmediately
+                  ? `Direct Admit to ${assignTargetBedCode || 'Bed'}`
+                  : `Confirm Bed Hold (${assignTargetBedCode || 'Select Bed'})`}
+              </button>
+            </div>
           </div>
         </div>
       )}

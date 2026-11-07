@@ -90,6 +90,10 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://hip-redis:6379}
       - PATIENT_SERVICE_URL=${PATIENT_SERVICE_URL:-http://hip-patient-service:8002}
       - INTERNAL_SERVICE_SECRET=${INTERNAL_SERVICE_SECRET}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - BED_RECOMMENDER_MODEL=${BED_RECOMMENDER_MODEL:-gemini-3.5-flash-lite}
+      - BED_RECOMMENDER_TEMPERATURE=${BED_RECOMMENDER_TEMPERATURE:-0.1}
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
     networks:
       - hip-network
     depends_on:

@@ -16,6 +16,9 @@ import type {
   PatientUpdateInput,
   StaffMember,
   TokenClaims,
+  BedRecommendationRequest,
+  BedRecommendationResult,
+  ReserveRecommendedBedInput,
 } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -361,5 +364,26 @@ export const api = {
   deactivateStaff: (personnelId: number): Promise<{ status: string; message: string }> =>
     request<{ status: string; message: string }>(`/auth/personnel/${personnelId}/deactivate`, {
       method: 'PUT',
+    }),
+
+  recommendBed: (data: BedRecommendationRequest): Promise<BedRecommendationResult> =>
+    request<BedRecommendationResult>('/beds/recommend', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  reserveRecommendedBed: (
+    data: ReserveRecommendedBedInput
+  ): Promise<{
+    status: string;
+    message: string;
+    bed_code: string;
+    bed_id: number;
+    allocation_id: number;
+    staged_equipment: Array<{ equipment_id: number; equipment_name: string; status: string }>;
+  }> =>
+    request('/beds/recommend/reserve', {
+      method: 'POST',
+      body: JSON.stringify(data),
     }),
 };
