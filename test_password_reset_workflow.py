@@ -130,8 +130,8 @@ def test_pydantic_schema_and_domain_validation():
     # Valid ResetPasswordRequest
     req2 = schemas.ResetPasswordRequest(
         token="some_valid_token",
-        new_password="NewSecurePassword123!",
-        confirm_password="NewSecurePassword123!"
+        new_password="TestValidPassword123!",
+        confirm_password="TestValidPassword123!"
     )
     test_result("Valid ResetPasswordRequest accepted", req2.token == "some_valid_token")
 
@@ -211,7 +211,7 @@ def test_live_mailpit_and_gateway_flow():
         print("  [SKIP] Live Gateway and/or Mailpit not running. Skipping live integration tests during unit test suite.")
         return
 
-    # Ensure nurse_jane exists if database is accessible
+    # Ensure isolated test user exists if database is accessible
     test_pg_dsn = os.getenv("TEST_PG_DSN")
     if test_pg_dsn:
         try:
@@ -221,7 +221,7 @@ def test_live_mailpit_and_gateway_flow():
                 try:
                     await conn.execute("""
                         INSERT INTO personnel (username, email, hashed_password, full_name, role, department, is_active, must_change_password)
-                        VALUES ('nurse_jane', 'nurse_jane@hospital.org', '$2b$12$aPsckHdYBHnxdGPTK7.bi.51JvQ1jaLywa1tHN2RJynRWLHteI9PW', 'Jane Foster, RN', 'NURSE', 'EMERGENCY', true, false)
+                        VALUES ('test_pwd_reset_nurse', 'test_pwd_reset_nurse@hospital.org', '$2b$12$aPsckHdYBHnxdGPTK7.bi.51JvQ1jaLywa1tHN2RJynRWLHteI9PW', 'Test Reset Nurse, RN', 'NURSE', 'EMERGENCY', true, false)
                         ON CONFLICT (email) DO UPDATE SET is_active = true, must_change_password = false;
                     """)
                 finally:
@@ -262,7 +262,7 @@ def test_live_mailpit_and_gateway_flow():
         test_result("Gateway connection error on login check", False, str(e))
 
     # Step 2: Request password reset for valid @hospital.org account
-    target_email = "nurse_jane@hospital.org"
+    target_email = "test_pwd_reset_nurse@hospital.org"
     try:
         req = urllib.request.Request(
             f"{gateway_url}/auth/forgot-password",

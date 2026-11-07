@@ -35,6 +35,25 @@ vi.mock('../lib/api', () => ({
     updatePatient: vi.fn(),
     deactivatePatient: vi.fn(),
     dischargeAdmission: vi.fn(),
+    recommendBed: vi.fn().mockResolvedValue({
+      status: 'SUCCESS',
+      recommendation: {
+        recommended_bed_code: 'ED-01',
+        department: 'EMERGENCY',
+        bed_type: 'TRAUMA',
+        confidence_score: 0.95,
+        clinical_rationale: 'Optimal trauma bay for inbound EMS presentation',
+        equipment_to_prestage: [],
+        alternative_beds: [],
+        infection_control_precautions: [],
+        is_immediate_ready: true,
+        mode: 'AI_RECOMMENDATION',
+      },
+      candidates_pool: [],
+      available_equipment: [],
+    }),
+    reserveRecommendedBed: vi.fn(),
+    allocateEquipment: vi.fn(),
   },
 }));
 
@@ -68,6 +87,15 @@ describe('Clinical EMS Call Intake & Inbound Integration (TDD Suite)', () => {
     vi.mocked(api.getPatients).mockResolvedValue(mockPatients);
     vi.mocked(api.getEquipmentList).mockResolvedValue([]);
     vi.mocked(api.getObservations).mockResolvedValue([]);
+    vi.mocked(api.createAdmission).mockResolvedValue({
+      admission_id: 101,
+      patient_id: 1,
+      bed_id: 1,
+      acuity_level: 'ESI_2',
+      primary_diagnosis: 'Emergency Inbound Arrival',
+      arrival_datetime: new Date().toISOString(),
+    });
+    vi.mocked(api.updateBedStatus).mockResolvedValue({});
   });
 
   it('renders the header with quick EMS Call Intake button and EMS tab', async () => {
@@ -673,5 +701,77 @@ describe('Clinical EMS Call Intake & Inbound Integration (TDD Suite)', () => {
 
     // Telemetry badge reflects OVERDUE
     expect(screen.getByText(/OVERDUE \(\+/i)).toBeInTheDocument();
+  });
+
+  it('displays Clinical Protocol Bed Recommendation inside Hold Bed modal with direct Hold Bed action', async () => {
+    localStorage.clear();
+
+    render(
+      <BrowserRouter>
+        <Clinical />
+      </BrowserRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /ems inbound intake/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Doe \[EMS-1024\]/i)).toBeInTheDocument();
+    });
+
+    // Verify clinical indicator badge on card
+    expect(screen.getByText(/Protocol Placement Ready/i)).toBeInTheDocument();
+
+    // Click Hold Bed / Admit
+    fireEvent.click(screen.getByRole('button', { name: /hold bed \/ admit/i }));
+
+    // Modal opens and Clinical Decision Support card renders
+    await waitFor(() => {
+      expect(screen.getByText(/Clinical Protocol Recommendation/i)).toBeInTheDocument();
+      expect(screen.getByText(/Optimal trauma bay for inbound EMS presentation/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /hold bed ed-01/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /choose other bed/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /confirm bed hold/i })).toBeInTheDocument();
+    });
+
+    // Clicking "Hold Bed ED-01" directly confirms and reserves the bed
+    fireEvent.click(screen.getByRole('button', { name: /hold bed ed-01/i }));
+
+    await waitFor(() => {
+      expect(api.updateBedStatus).toHaveBeenCalledWith('ED-01', 'RESERVED', expect.objectContaining({
+        patient_id: 1,
+      }));
+    });
+  });
+
+  it('allows nurse to choose another bed and manually override the protocol recommendation', async () => {
+    localStorage.clear();
+
+    render(
+      <BrowserRouter>
+        <Clinical />
+      </BrowserRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /ems inbound intake/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Doe \[EMS-1024\]/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /hold bed \/ admit/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Clinical Protocol Recommendation/i)).toBeInTheDocument();
+    });
+
+    // Clicking "Choose Other Bed..." lets user pick alternative
+    fireEvent.click(screen.getByRole('button', { name: /choose other bed/i }));
+
+    // Manually change select dropdown to another option (or clear)
+    const select = screen.getByLabelText(/Destination Bed/i);
+    fireEvent.change(select, { target: { value: '' } });
+
+    // Verify manual override state is reflected
+    expect(screen.getByText(/Manual Override/i)).toBeInTheDocument();
   });
 });

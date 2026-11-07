@@ -4,7 +4,6 @@ import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
-
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 import httpx
 from pydantic import BaseModel, Field
@@ -18,6 +17,13 @@ from database import get_db, init_db
 import models
 from redis_client import get_redis, lifespan as redis_lifespan
 from security import UserRole, require_roles, require_roles_or_internal
+from candidate_selector import fetch_candidate_bed_pool, fetch_available_equipment_pool
+from recommender import (
+    BedRecommendationRequest,
+    BedRecommendationResponse,
+    PatientTriageInfo,
+    generate_bed_recommendation,
+)
 
 logger = logging.getLogger("hip.bed")
 
@@ -1382,3 +1388,194 @@ async def release_equipment(
     await invalidate_grid_cache(redis)
 
     return {"status": "SUCCESS", "message": f"Equipment allocation #{equipment_allocation_id} released."}
+
+
+class ReserveRecommendedBedRequest(BaseModel):
+    bed_code: str
+    expected_version: Optional[int] = None
+    admission_id: Optional[int] = None
+    encounter_id: Optional[int] = None
+    patient_id: Optional[int] = None
+    acuity_level: Optional[str] = "ESI_3"
+    primary_diagnosis: Optional[str] = Field(None, max_length=500)
+    diagnosis: Optional[str] = Field("Observation", max_length=500)
+    notes: Optional[str] = Field(None, max_length=1000)
+    prestage_equipment_ids: Optional[List[int]] = Field(default_factory=list)
+
+    def get_admission_id(self) -> Optional[int]:
+        return self.admission_id or self.encounter_id
+
+    def get_diagnosis(self) -> str:
+        return self.primary_diagnosis or self.diagnosis or "Observation"
+
+
+@app.post("/recommend")
+async def recommend_bed_for_triage(
+    req: BedRecommendationRequest,
+    current_user: Dict[str, Any] = Depends(require_roles_or_internal(UserRole.DOCTOR, UserRole.NURSE)),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Sub-600ms deterministic candidate slicing + single-shot LCEL recommendation.
+    Guarantees zero-hallucination bed codes and protects against race conditions.
+    """
+    candidates, flags = await fetch_candidate_bed_pool(
+        db,
+        acuity_level=req.patient.acuity_level,
+        requires_isolation=req.patient.requires_isolation,
+        requires_bariatric=req.patient.requires_bariatric,
+        preferred_department=req.preferred_department,
+        limit=req.max_candidate_beds or 12
+    )
+
+    if not candidates:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No candidate beds currently available in the hospital matching the minimum criteria."
+        )
+
+    available_equipment = await fetch_available_equipment_pool(
+        db,
+        department=req.preferred_department
+    )
+
+    recommendation = await generate_bed_recommendation(
+        patient=req.patient,
+        candidates=candidates,
+        available_equipment=available_equipment,
+        contingency_flags=flags
+    )
+
+    return {
+        "status": "SUCCESS",
+        "recommendation": recommendation.model_dump(),
+        "candidates_pool": candidates,
+        "available_equipment": available_equipment,
+        "contingency_flags": flags
+    }
+
+
+@app.post("/recommend/reserve")
+async def reserve_recommended_bed_and_equipment(
+    req: ReserveRecommendedBedRequest,
+    current_user: Dict[str, Any] = Depends(require_roles_or_internal(UserRole.DOCTOR, UserRole.NURSE)),
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis)
+):
+    """
+    1-Click AI recommendation execution:
+    Atomically reserves the recommended bed (with optimistic locking) and pre-stages all requested equipment.
+    """
+    admission_id = req.get_admission_id()
+
+    internal_headers = {
+        "X-User-Id": str(current_user["user_id"]),
+        "X-User-Role": current_user["role"],
+        "X-Internal-Token": INTERNAL_SERVICE_SECRET,
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            if not admission_id and req.patient_id:
+                admission_id = await _resolve_or_create_admission(client, req, internal_headers)
+            if not admission_id:
+                raise HTTPException(status_code=400, detail="Either admission_id, encounter_id, or patient_id is required.")
+            await _verify_admission_active(client, admission_id, internal_headers)
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Unable to reach Patient & Admission service.")
+
+    # Invariant: Prevent duplicate active reservations per admission
+    alloc_check = await db.execute(
+        select(models.BedAllocation).where(
+            models.BedAllocation.admission_id == admission_id,
+            models.BedAllocation.status.in_(["RESERVED", "OCCUPIED"]),
+            models.BedAllocation.end_datetime.is_(None)
+        )
+    )
+    if alloc_check.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Admission #{admission_id} already has an active bed reservation or stay."
+        )
+
+    bed_result = await db.execute(select(models.Bed).where(models.Bed.bed_code == req.bed_code.upper()))
+    bed = bed_result.scalars().first()
+    if not bed:
+        raise HTTPException(status_code=404, detail="Bed location not found.")
+
+    if bed.status != "AVAILABLE":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Bed {req.bed_code} is currently {bed.status} (must be AVAILABLE)."
+        )
+
+    new_alloc = await _execute_bed_reservation(db, bed, admission_id, current_user["user_id"], req.expected_version)
+
+    # Pre-stage requested equipment (strictly enforcing max 1 unit per type, no crash carts)
+    staged_equipment = []
+    if req.prestage_equipment_ids:
+        allocated_types = set()
+        for eq_id in req.prestage_equipment_ids:
+            eq_query = (
+                select(models.Equipment)
+                .options(selectinload(models.Equipment.equipment_type))
+                .where(models.Equipment.equipment_id == eq_id)
+            )
+            eq_res = await db.execute(eq_query)
+            eq = eq_res.scalars().first()
+
+            if not eq or eq.status != "AVAILABLE":
+                continue
+
+            eq_type_str = ((eq.equipment_type.name if eq.equipment_type else eq.equipment_name) or "").strip().lower()
+
+            # Rule 2: Never place Crash Cart in individual patient room
+            if "crash cart" in eq_type_str or "crash cart" in (eq.equipment_name or "").lower():
+                logger.warning(f"Rejected Crash Cart #{eq_id} from room staging: crash carts remain in hallway.")
+                continue
+
+            # Rule 1: Never assign more than ONE (1) unit of any primary equipment type
+            if eq_type_str in allocated_types:
+                logger.warning(f"Rejected duplicate equipment #{eq_id} of type '{eq_type_str}' (max 1 per patient)")
+                continue
+
+            allocated_types.add(eq_type_str)
+            eq.status = "ALLOCATED"
+            eq.version += 1
+            eq_alloc = models.EquipmentAllocation(
+                equipment_id=eq.equipment_id,
+                admission_id=admission_id,
+                allocated_by_personnel_id=current_user["user_id"],
+                status="ACTIVE",
+                start_datetime=func.now()
+            )
+            db.add(eq_alloc)
+            staged_equipment.append({
+                "equipment_id": eq.equipment_id,
+                "equipment_name": eq.equipment_name,
+                "status": "ALLOCATED"
+            })
+
+    await db.commit()
+    await invalidate_grid_cache(redis)
+    await publish_event(redis, "BED_RESERVED", {
+        "bed_id": bed.bed_id,
+        "bed_code": req.bed_code.upper(),
+        "allocation_id": new_alloc.allocation_id,
+        "admission_id": admission_id,
+        "encounter_id": admission_id,
+        "status": "RESERVED",
+        "version": bed.version,
+        "staged_equipment_count": len(staged_equipment),
+        "message": f"Bed {req.bed_code} reserved with {len(staged_equipment)} pre-staged equipment items via AI Recommendation."
+    }, actor=current_user.get("full_name") or current_user.get("username") or f"Staff #{current_user['user_id']}")
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Bed {req.bed_code} reserved and {len(staged_equipment)} equipment items staged successfully.",
+        "bed_code": req.bed_code.upper(),
+        "bed_id": bed.bed_id,
+        "allocation_id": new_alloc.allocation_id,
+        "admission_id": admission_id,
+        "staged_equipment": staged_equipment
+    }

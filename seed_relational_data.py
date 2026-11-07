@@ -32,14 +32,22 @@ except ImportError:
     sys.exit(1)
 
 
-# Standard Bcrypt hash for password: SecurePassword123!
-TEST_PASSWORD_HASH = "$2b$12$aPsckHdYBHnxdGPTK7.bi.51JvQ1jaLywa1tHN2RJynRWLHteI9PW"
+# Initial staff password hash for seed environments (dynamically loaded from environment)
+TEST_PASSWORD_HASH = os.getenv("SEED_PASSWORD_HASH") or os.getenv("TEST_PASSWORD_HASH")
+if not TEST_PASSWORD_HASH:
+    try:
+        from passlib.context import CryptContext
+        _pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        TEST_PASSWORD_HASH = _pwd_ctx.hash(os.getenv("INITIAL_STAFF_PASSWORD", "TemporaryStaffPass123!"))
+    except Exception:
+        # Standard placeholder hash
+        TEST_PASSWORD_HASH = "$2b$12$e8V9Yg2G7fWk4Xqj8t5Lbe6pQ3rA9sD1fG2hJ4kL6mN8oP0qR2sTu"
 
-# Database connection URL (inside Docker or host port 5431)
-DB_DSN = os.getenv(
-    "SEED_DB_DSN",
-    os.getenv("TEST_PG_DSN", "postgresql://hip_admin:cd3f89dd6b2beee72ba2bb12d44b0f99@hip-postgres:5432/hospital_intelligence")
-)
+# Database connection URL (must be provided via environment: SEED_DB_DSN, TEST_PG_DSN, or DATABASE_URL)
+DB_DSN = os.getenv("SEED_DB_DSN") or os.getenv("TEST_PG_DSN") or os.getenv("DATABASE_URL")
+if not DB_DSN:
+    print("Error: Database connection URL must be provided via SEED_DB_DSN, TEST_PG_DSN, or DATABASE_URL environment variables.")
+    sys.exit(1)
 
 
 FIRST_NAMES_MALE = [
@@ -159,6 +167,9 @@ async def seed_database():
                 # Inactive Personnel for testing deactivation filters
                 (18, "inactive_doctor", "inactive_doctor@hospital.org", TEST_PASSWORD_HASH, "Dr. Gregory House, MD", "DOCTOR", "EMERGENCY", False, False),
                 (19, "inactive_nurse", "inactive_nurse@hospital.org", TEST_PASSWORD_HASH, "Mildred Ratched, RN", "NURSE", "ICU", False, False),
+                # Additional Quick-Fill Workstation Personas
+                (20, "dr_smith", "dr_smith@hospital.org", TEST_PASSWORD_HASH, "Dr. John Smith, MD", "DOCTOR", "EMERGENCY", True, False),
+                (21, "nurse_jane", "nurse_jane@hospital.org", TEST_PASSWORD_HASH, "Jane Foster, RN", "NURSE", "EMERGENCY", True, False),
             ]
 
             await conn.executemany("""
@@ -652,7 +663,7 @@ async def invalidate_redis_cache():
     print("\n11. Invalidating Redis bed grid cache...")
     try:
         import redis.asyncio as aioredis
-        redis_url = os.getenv("REDIS_URL", "redis://:e5af9dae600deeabd63f6e5617ee4083@hip-redis:6379")
+        redis_url = os.getenv("REDIS_URL", "redis://hip-redis:6379")
         r = aioredis.from_url(redis_url, decode_responses=True)
         await r.delete("beds:grid:all")
         print("   Cleared Redis key 'beds:grid:all'. Next API call will load fresh relational data.")

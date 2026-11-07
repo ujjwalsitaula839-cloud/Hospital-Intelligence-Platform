@@ -219,3 +219,77 @@ export interface StaffMember {
   must_change_password: boolean;
 }
 
+export interface EquipmentPrestageItem {
+  equipment_type: string;
+  priority: 'MANDATORY' | 'RECOMMENDED' | 'OPTIONAL';
+  reason: string;
+}
+
+export interface AlternativeBed {
+  bed_code: string;
+  department: Department;
+  rationale: string;
+}
+
+export interface BedRecommendation {
+  recommended_bed_code: string;
+  department: Department;
+  bed_type: string;
+  confidence_score: number;
+  clinical_rationale: string;
+  equipment_to_prestage: EquipmentPrestageItem[];
+  alternative_beds: AlternativeBed[];
+  infection_control_precautions: string[];
+  warning_advisories?: string[];
+  is_immediate_ready: boolean;
+  mode: 'AI_RECOMMENDATION' | 'DETERMINISTIC_RULES_FALLBACK';
+}
+
+export interface PatientTriageInfo {
+  patient_id?: number | null;
+  full_name?: string | null;
+  age?: number | null;
+  gender?: string | null;
+  acuity_level: AcuityLevel;
+  primary_diagnosis?: string | null;
+  chief_complaint?: string | null;
+  systolic_bp?: number | null;
+  diastolic_bp?: number | null;
+  heart_rate?: number | null;
+  respiratory_rate?: number | null;
+  oxygen_saturation?: number | null;
+  temperature_celsius?: number | null;
+  requires_isolation: boolean;
+  requires_bariatric: boolean;
+  infection_type?: string | null;
+  notes?: string | null;
+}
+
+export interface BedRecommendationRequest {
+  patient: PatientTriageInfo;
+  preferred_department?: Department | null;
+  max_candidate_beds?: number;
+}
+
+export interface BedRecommendationResult {
+  status: string;
+  recommendation: BedRecommendation;
+  candidates_pool: Bed[];
+  available_equipment: EquipmentItem[];
+  contingency_flags?: {
+    isolation_contingency?: boolean;
+    bariatric_contingency?: boolean;
+  };
+}
+
+export interface ReserveRecommendedBedInput {
+  bed_code: string;
+  expected_version: number;
+  patient_id?: number | null;
+  admission_id?: number | null;
+  acuity_level?: AcuityLevel;
+  primary_diagnosis?: string | null;
+  prestage_equipment_ids?: number[];
+}
+
+
