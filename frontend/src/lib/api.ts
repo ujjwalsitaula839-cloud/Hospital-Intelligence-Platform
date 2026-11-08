@@ -386,4 +386,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+
+  chatWithElon: (
+    data: { message: string; session_id?: string }
+  ): Promise<{ response: string; session_id: string; timestamp: string }> =>
+    request<{ response: string; session_id: string; timestamp: string }>('/beds/elon/chat', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 };

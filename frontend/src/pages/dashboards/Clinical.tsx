@@ -20,6 +20,7 @@ import EmsIntakeForm from '../../components/ems/EmsIntakeForm';
 import EmsCallIntakeModal from '../../components/ems/EmsCallIntakeModal';
 import ThemeToggle from '../../components/navigation/ThemeToggle';
 import NotificationBell, { type AppNotification } from '../../components/navigation/NotificationBell';
+import ElonChatWidget from '../../components/elon/ElonChatWidget';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -4296,6 +4297,11 @@ export default function Clinical(): React.ReactElement {
         onClose={() => setIsEmsModalOpen(false)}
         onSuccess={handleEmsSuccess}
       />
+
+      {/* ================================================================= */}
+      {/* FLOATING OPERATIONS AGENT: CHAT WITH ELON */}
+      {/* ================================================================= */}
+      <ElonChatWidget />
     </div>
   );
 }

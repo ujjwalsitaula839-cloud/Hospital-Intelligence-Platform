@@ -53,6 +53,9 @@ app = FastAPI(
     lifespan=combined_lifespan
 )
 
+from elon import elon_router
+app.include_router(elon_router)
+
 
 class BedCreate(BaseModel):
     bed_code: str = Field(..., min_length=2, max_length=30)
