@@ -1,0 +1,2 @@
+# Place production TLS files cert.pem and key.pem in this directory (both are gitignored).
+

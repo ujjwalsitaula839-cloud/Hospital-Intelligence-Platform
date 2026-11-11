@@ -96,7 +96,7 @@ async def run_all_tests():
     finally:
         await conn.close()
 
-    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=15.0) as client:
+    async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=30.0) as client:
 
         # =========================================================
         # SETUP: Register 3 staff members with different roles

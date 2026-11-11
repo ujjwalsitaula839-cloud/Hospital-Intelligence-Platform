@@ -21,5 +21,6 @@ COPY main.py /app/
 # Expose the port FastAPI runs on
 EXPOSE 8000
 
-# Command to run the application using Uvicorn
+# Command to run the application using Uvicorn behind Nginx reverse proxy
+# Raw TCP peer IP is preserved so gateway._extract_client_ip validates trusted proxy hops cleanly.
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
