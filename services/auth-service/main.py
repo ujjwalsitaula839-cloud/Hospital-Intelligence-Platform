@@ -235,6 +235,17 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def enforce_gateway_origin(request: Request, call_next):
+    """Ensure direct calls to auth-service cannot bypass gateway rate-limiting in production."""
+    if request.url.path != "/health":
+        try:
+            security.verify_gateway_secret(request.headers.get("X-Gateway-Secret"))
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
+
 # ===========================================================================
 # HEALTH CHECK
 # ===========================================================================

@@ -5,9 +5,16 @@
 # =================================================================
 
 services:
+  nginx:
+    environment:
+      - ENABLE_DOCS=true
+
   gateway:
     volumes:
       - ./gateway:/app
+    environment:
+      - ENV=development
+      - ENABLE_DOCS=true
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   auth-service:
@@ -27,8 +34,8 @@ services:
 
   postgres:
     ports:
-      - "5431:5432"
+      - "127.0.0.1:5431:5432"
 
   redis:
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"

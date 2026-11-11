@@ -9,22 +9,49 @@ volumes:
     driver: local
 
 services:
+  # --- EDGE REVERSE PROXY, TLS & RATE LIMITER ---
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: hip-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+      - "127.0.0.1:8080:80"
+    environment:
+      - ENABLE_DOCS=${ENABLE_DOCS:-false}
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    networks:
+      - hip-network
+    depends_on:
+      gateway:
+        condition: service_started
+
   # --- EDGE ROUTING LAYER ---
   gateway:
     build:
       context: ./gateway
       dockerfile: Dockerfile
     container_name: hip-gateway
-    ports:
-      - "8080:8000"
+    expose:
+      - "8000"
     environment:
       - ENV=production
+      - ENABLE_DOCS=${ENABLE_DOCS:-false}
       - SECRET_KEY=${SECRET_KEY}
+      - INTERNAL_SERVICE_SECRET=${INTERNAL_SERVICE_SECRET:-}
       - REDIS_URL=${REDIS_URL:-redis://hip-redis:6379}
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://hip-auth-service:8001}
       - PATIENT_SERVICE_URL=${PATIENT_SERVICE_URL:-http://hip-patient-service:8002}
       - BED_SERVICE_URL=${BED_SERVICE_URL:-http://hip-bed-service:8003}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
+      - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-true}
+      - MAX_BODY_BYTES=${MAX_BODY_BYTES:-2097152}
+      - RATE_LIMIT_AI_PER_MIN=${RATE_LIMIT_AI_PER_MIN:-20}
+      - RATE_LIMIT_USER_PER_MIN=${RATE_LIMIT_USER_PER_MIN:-300}
+      - RATE_LIMIT_ANON_AUTH_PER_MIN=${RATE_LIMIT_ANON_AUTH_PER_MIN:-60}
     networks:
       - hip-network
     depends_on:
@@ -39,12 +66,13 @@ services:
       context: ./services/auth-service
       dockerfile: Dockerfile
     container_name: hip-auth-service
-    ports:
-      - "8001:8001"
+    expose:
+      - "8001"
     environment:
       - ENV=production
       - DATABASE_URL=${DATABASE_URL}
       - SECRET_KEY=${SECRET_KEY}
+      - INTERNAL_SERVICE_SECRET=${INTERNAL_SERVICE_SECRET:-}
       - REDIS_URL=${REDIS_URL:-redis://hip-redis:6379}
       - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}
       - SMTP_HOST=${SMTP_HOST:-mailpit}
@@ -65,8 +93,8 @@ services:
   patient-service:
     build: ./services/patient-service
     container_name: hip-patient-service
-    ports:
-      - "8002:8002"
+    expose:
+      - "8002"
     command: uvicorn main:app --host 0.0.0.0 --port 8002
     environment:
       - DATABASE_URL=${DATABASE_URL}
@@ -82,8 +110,8 @@ services:
   bed-service:
     build: ./services/bed-service
     container_name: hip-bed-service
-    ports:
-      - "8003:8003"
+    expose:
+      - "8003"
     command: uvicorn main:app --host 0.0.0.0 --port 8003
     environment:
       - DATABASE_URL=${DATABASE_URL}
@@ -111,7 +139,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5431:5432"
+      - "127.0.0.1:5431:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -138,8 +166,8 @@ services:
     image: axllent/mailpit:latest
     container_name: hip-mailpit
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
     networks:
       - hip-network
 
