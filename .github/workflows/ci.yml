@@ -112,6 +112,11 @@ jobs:
         run: |
           python services/bed-service/test_recommender_unit.py
 
+      - name: Run Bed & Patient Service BOLA Unit Tests
+        run: |
+          PYTHONPATH=services/bed-service python services/bed-service/test_bola_unit.py
+          PYTHONPATH=services/patient-service python services/patient-service/test_bola_unit.py
+
       - name: Run API Gateway Rate Limiting & Zero-Trust Unit Tests
         env:
           SECRET_KEY: test-gateway-secret-key-for-unit-tests-only
@@ -186,6 +191,7 @@ jobs:
         run: |
           python test_password_reset_workflow.py
           python test_concurrency_and_history.py
+          python test_bola_authorization.py
           python test_edge_and_rate_limiting.py
 
       - name: Dump Container Logs on Failure

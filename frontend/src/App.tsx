@@ -52,7 +52,7 @@ export default function App(): React.ReactElement {
             <Route
               path="/dashboard/housekeeping"
               element={
-                <ProtectedRoute allowedRoles={['CLEANING_CREW']}>
+                <ProtectedRoute allowedRoles={['CLEANING_CREW', 'ADMIN']}>
                   <Housekeeping />
                 </ProtectedRoute>
               }

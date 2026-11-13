@@ -35,6 +35,10 @@ vi.mock('../lib/api', () => ({
     updatePatient: vi.fn(),
     deactivatePatient: vi.fn(),
     dischargeAdmission: vi.fn(),
+    getNurses: vi.fn().mockResolvedValue([]),
+    getNurseAssignments: vi.fn().mockResolvedValue([]),
+    assignNurse: vi.fn(),
+    completeNurseAssignment: vi.fn(),
     recommendBed: vi.fn().mockResolvedValue({
       status: 'SUCCESS',
       recommendation: {

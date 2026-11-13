@@ -10,11 +10,13 @@ import type {
   BedRecommendationResult,
   BedStatus,
   EquipmentItem,
+  NurseAssignment,
   Observation,
   ObservationInput,
   Patient,
   PatientCreateInput,
   PatientUpdateInput,
+  StaffMember,
 } from '../../types';
 import EmsIntakeForm from '../../components/ems/EmsIntakeForm';
 import EmsCallIntakeModal from '../../components/ems/EmsCallIntakeModal';
@@ -274,6 +276,16 @@ export default function Clinical(): React.ReactElement {
   const [chartPatient, setChartPatient] = useState<Patient | null>(null);
   const [patientAdmissions, setPatientAdmissions] = useState<Admission[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
+  const [nursesList, setNursesList] = useState<StaffMember[]>([]);
+  const [nurseAssignments, setNurseAssignments] = useState<Record<number, NurseAssignment | null>>({});
+  const [selectedHandoverNurse, setSelectedHandoverNurse] = useState<Record<number, number>>({});
+  const [assignmentLoading, setAssignmentLoading] = useState<Record<number, boolean>>({});
+  const [assignmentError, setAssignmentError] = useState<Record<number, string | null>>({});
+  const [onlyMyPatients, setOnlyMyPatients] = useState<boolean>(false);
+  const [quickHandoverBed, setQuickHandoverBed] = useState<Bed | null>(null);
+  const [quickHandoverNurseId, setQuickHandoverNurseId] = useState<number | ''>('');
+  const [quickHandoverLoading, setQuickHandoverLoading] = useState<boolean>(false);
+  const [quickHandoverError, setQuickHandoverError] = useState<string | null>(null);
 
   // Vitals Charting Modal / Input Form State
   const [chartingAdmissionId, setChartingAdmissionId] = useState<number | null>(null);
@@ -361,6 +373,7 @@ export default function Clinical(): React.ReactElement {
   useEffect(() => {
     fetchBeds();
     fetchPatients();
+    api.getNurses?.()?.then((data) => setNursesList(data || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -1013,10 +1026,71 @@ export default function Clinical(): React.ReactElement {
     try {
       const data = await api.getAdmissions(patient.patient_id);
       setPatientAdmissions(data);
+      const assignmentsMap: Record<number, NurseAssignment | null> = {};
+      await Promise.all(
+        data.map(async (adm) => {
+          try {
+            const list = (await api.getNurseAssignments?.(adm.admission_id)) || [];
+            assignmentsMap[adm.admission_id] = list.find((a) => a.status === 'ACTIVE') || list[0] || null;
+          } catch {
+            assignmentsMap[adm.admission_id] = null;
+          }
+        })
+      );
+      setNurseAssignments(assignmentsMap);
     } catch {
       setPatientAdmissions([]);
     } finally {
       setChartLoading(false);
+    }
+  };
+
+  const handleAssignNurse = async (admissionId: number) => {
+    const nurseId = selectedHandoverNurse[admissionId];
+    if (!nurseId) return;
+    setAssignmentLoading((prev) => ({ ...prev, [admissionId]: true }));
+    setAssignmentError((prev) => ({ ...prev, [admissionId]: null }));
+    try {
+      const updated = await api.assignNurse(admissionId, nurseId);
+      setNurseAssignments((prev) => ({ ...prev, [admissionId]: updated }));
+      fetchBeds({ silent: true });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to assign nurse.';
+      setAssignmentError((prev) => ({ ...prev, [admissionId]: msg }));
+    } finally {
+      setAssignmentLoading((prev) => ({ ...prev, [admissionId]: false }));
+    }
+  };
+
+  const handleCompleteNurseAssignment = async (assignmentId: number, admissionId: number) => {
+    setAssignmentLoading((prev) => ({ ...prev, [admissionId]: true }));
+    setAssignmentError((prev) => ({ ...prev, [admissionId]: null }));
+    try {
+      await api.completeNurseAssignment?.(assignmentId);
+      setNurseAssignments((prev) => ({ ...prev, [admissionId]: null }));
+      fetchBeds({ silent: true });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to complete nurse shift.';
+      setAssignmentError((prev) => ({ ...prev, [admissionId]: msg }));
+    } finally {
+      setAssignmentLoading((prev) => ({ ...prev, [admissionId]: false }));
+    }
+  };
+
+  const handleQuickHandoverSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickHandoverBed?.admission_id || !quickHandoverNurseId) return;
+    setQuickHandoverLoading(true);
+    setQuickHandoverError(null);
+    try {
+      await api.assignNurse(quickHandoverBed.admission_id, Number(quickHandoverNurseId));
+      await fetchBeds({ silent: true });
+      setQuickHandoverBed(null);
+      setQuickHandoverNurseId('');
+    } catch (err: unknown) {
+      setQuickHandoverError(err instanceof Error ? err.message : 'Failed to transfer care.');
+    } finally {
+      setQuickHandoverLoading(false);
     }
   };
 
@@ -1550,7 +1624,8 @@ export default function Clinical(): React.ReactElement {
       (bedStatusFilter === 'DIRTY'
         ? b.status === 'DIRTY' || b.status === 'CLEANING_IN_PROGRESS'
         : b.status === bedStatusFilter);
-    return matchesDept && matchesStatus;
+    const matchesMyPatients = !onlyMyPatients || (b.assigned_nurse_id === claims?.personnel_id);
+    return matchesDept && matchesStatus && matchesMyPatients;
   });
 
   return (
@@ -1717,7 +1792,7 @@ export default function Clinical(): React.ReactElement {
             </div>
 
             {/* KPI Census Summary Bar */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5 font-mono text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 mb-5 font-mono text-xs">
               <div className="bg-zinc-900/80 border border-zinc-800 p-3 flex flex-col justify-between">
                 <span className="text-zinc-500 uppercase text-[10px] tracking-wider">Total Beds</span>
                 <span className="text-xl font-bold text-white mt-1">{beds.length}</span>
@@ -1786,6 +1861,26 @@ export default function Clinical(): React.ReactElement {
                   {beds.filter((b) => b.status === 'DIRTY' || b.status === 'CLEANING_IN_PROGRESS').length}
                 </span>
               </div>
+              <div
+                onClick={() => setOnlyMyPatients(!onlyMyPatients)}
+                className={`border p-3 flex flex-col justify-between cursor-pointer transition-colors ${
+                  onlyMyPatients
+                    ? 'bg-blue-950/70 border-blue-500 ring-1 ring-blue-500'
+                    : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-blue-400 uppercase text-[10px] tracking-wider font-semibold">
+                    {claims?.role === 'NURSE' ? 'My Patients' : 'Assigned'}
+                  </span>
+                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                </div>
+                <span className="text-xl font-bold text-blue-300 mt-1">
+                  {claims?.role === 'NURSE'
+                    ? beds.filter((b) => b.assigned_nurse_id === claims?.personnel_id).length
+                    : beds.filter((b) => !!b.assigned_nurse_id).length}
+                </span>
+              </div>
             </div>
 
             {/* Quick Filters Bar */}
@@ -1806,14 +1901,37 @@ export default function Clinical(): React.ReactElement {
                     {dept.replace('_', ' ')}
                   </button>
                 ))}
-              </div>
-
-              {bedStatusFilter !== 'ALL' && (
-                <div className="flex items-center gap-2 font-mono text-[11px]">
-                  <span className="text-zinc-400">Filtering: <strong className="text-white">{bedStatusFilter}</strong></span>
+                {claims?.role === 'NURSE' && (
                   <button
                     type="button"
-                    onClick={() => setBedStatusFilter('ALL')}
+                    onClick={() => setOnlyMyPatients(!onlyMyPatients)}
+                    className={`ml-2 px-2.5 py-1 text-[11px] font-mono uppercase tracking-wider border transition-colors ${
+                      onlyMyPatients
+                        ? 'bg-blue-600 text-white font-bold border-blue-500 shadow-xs'
+                        : 'bg-zinc-900 text-blue-400 border-zinc-800 hover:border-zinc-700 hover:text-blue-300'
+                    }`}
+                  >
+                    🩺 My Patients ({beds.filter((b) => b.assigned_nurse_id === claims?.personnel_id).length})
+                  </button>
+                )}
+              </div>
+
+              {(bedStatusFilter !== 'ALL' || onlyMyPatients) && (
+                <div className="flex items-center gap-2 font-mono text-[11px]">
+                  <span className="text-zinc-400">
+                    Filtering:{' '}
+                    <strong className="text-white">
+                      {bedStatusFilter !== 'ALL' ? bedStatusFilter : ''}
+                      {bedStatusFilter !== 'ALL' && onlyMyPatients ? ' + ' : ''}
+                      {onlyMyPatients ? 'My Assigned Patients' : ''}
+                    </strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBedStatusFilter('ALL');
+                      setOnlyMyPatients(false);
+                    }}
                     className="text-zinc-400 hover:text-white underline text-[10px]"
                   >
                     Clear Filter
@@ -1961,6 +2079,31 @@ export default function Clinical(): React.ReactElement {
                               <div className="text-zinc-500 text-[10px] mt-0.5">
                                 Stay #{bed.admission_id} • MRN #{bed.patient_id || 'N/A'}
                               </div>
+                              <div className="mt-1.5 pt-1.5 border-t border-red-900/40 flex items-center justify-between text-[10px]">
+                                <span className="text-zinc-400 truncate pr-1">
+                                  Nurse:{' '}
+                                  <strong className={bed.assigned_nurse_id === claims?.personnel_id ? 'text-blue-400 font-bold' : 'text-zinc-200'}>
+                                    {bed.assigned_nurse_name ||
+                                      (bed.assigned_nurse_id
+                                        ? nursesList.find((n) => n.personnel_id === bed.assigned_nurse_id)?.full_name || `Nurse #${bed.assigned_nurse_id}`
+                                        : 'Unassigned')}
+                                  </strong>
+                                </span>
+                                {bed.admission_id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setQuickHandoverBed(bed);
+                                      setQuickHandoverNurseId(bed.assigned_nurse_id || '');
+                                      setQuickHandoverError(null);
+                                    }}
+                                    className="text-[9px] px-1.5 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors shrink-0"
+                                    title="Quick Shift Handover"
+                                  >
+                                    Handover
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
                             <div className="grid grid-cols-2 gap-1.5 pt-1">
@@ -2023,6 +2166,31 @@ export default function Clinical(): React.ReactElement {
                               )}
                               <div className="text-yellow-500/80 text-[10px] mt-0.5">
                                 Hold: Stay #{bed.admission_id || 'Active'} • MRN #{bed.patient_id || 'N/A'}
+                              </div>
+                              <div className="mt-1.5 pt-1.5 border-t border-yellow-900/40 flex items-center justify-between text-[10px]">
+                                <span className="text-zinc-400 truncate pr-1">
+                                  Nurse:{' '}
+                                  <strong className={bed.assigned_nurse_id === claims?.personnel_id ? 'text-blue-400 font-bold' : 'text-zinc-200'}>
+                                    {bed.assigned_nurse_name ||
+                                      (bed.assigned_nurse_id
+                                        ? nursesList.find((n) => n.personnel_id === bed.assigned_nurse_id)?.full_name || `Nurse #${bed.assigned_nurse_id}`
+                                        : 'Unassigned')}
+                                  </strong>
+                                </span>
+                                {bed.admission_id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setQuickHandoverBed(bed);
+                                      setQuickHandoverNurseId(bed.assigned_nurse_id || '');
+                                      setQuickHandoverError(null);
+                                    }}
+                                    className="text-[9px] px-1.5 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors shrink-0"
+                                    title="Quick Shift Handover"
+                                  >
+                                    Handover
+                                  </button>
+                                )}
                               </div>
                             </div>
 
@@ -3984,6 +4152,76 @@ export default function Clinical(): React.ReactElement {
                             <span>Admitted: {new Date(adm.arrival_datetime).toLocaleDateString()}</span>
                           </div>
 
+                          {/* Nurse Assignment & Handover Section */}
+                          <div className="mt-2.5 pt-2 border-t border-zinc-800 space-y-1.5">
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="text-zinc-500">Assigned Nurse:</span>
+                              <span className="font-semibold text-zinc-200">
+                                {nurseAssignments[adm.admission_id]
+                                  ? (nursesList.find((n) => n.personnel_id === nurseAssignments[adm.admission_id]?.nurse_id)?.full_name ||
+                                     `Nurse #${nurseAssignments[adm.admission_id]?.nurse_id}`)
+                                  : 'Unassigned'}
+                              </span>
+                            </div>
+
+                            {isActive && (
+                              <div className="flex items-center gap-1.5 pt-1">
+                                <select
+                                  value={selectedHandoverNurse[adm.admission_id] || ''}
+                                  onChange={(e) =>
+                                    setSelectedHandoverNurse((prev) => ({
+                                      ...prev,
+                                      [adm.admission_id]: Number(e.target.value),
+                                    }))
+                                  }
+                                  className="flex-1 bg-zinc-900 border border-zinc-800 text-zinc-200 text-[11px] font-mono px-2 py-1 focus:outline-none focus:border-zinc-600"
+                                >
+                                  <option value="">Select Oncoming Nurse...</option>
+                                  {nursesList.map((n) => (
+                                    <option key={n.personnel_id} value={n.personnel_id}>
+                                      {n.full_name} ({n.department})
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  disabled={
+                                    !selectedHandoverNurse[adm.admission_id] ||
+                                    assignmentLoading[adm.admission_id]
+                                  }
+                                  onClick={() => handleAssignNurse(adm.admission_id)}
+                                  className="bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white px-2.5 py-1 text-[11px] font-mono font-semibold transition-colors shrink-0"
+                                >
+                                  {assignmentLoading[adm.admission_id] ? 'Handing over...' : 'Handover'}
+                                </button>
+                              </div>
+                            )}
+
+                            {isActive && nurseAssignments[adm.admission_id] && (
+                              <div className="pt-1 flex justify-end">
+                                <button
+                                  type="button"
+                                  disabled={assignmentLoading[adm.admission_id]}
+                                  onClick={() =>
+                                    handleCompleteNurseAssignment(
+                                      nurseAssignments[adm.admission_id]!.assignment_id,
+                                      adm.admission_id
+                                    )
+                                  }
+                                  className="text-[10px] text-zinc-400 hover:text-red-400 underline font-mono"
+                                >
+                                  End Current Shift Assignment
+                                </button>
+                              </div>
+                            )}
+
+                            {assignmentError[adm.admission_id] && (
+                              <div className="text-[10px] text-red-400 font-mono">
+                                {assignmentError[adm.admission_id]}
+                              </div>
+                            )}
+                          </div>
+
                           {isActive && (
                             <div className="mt-3 pt-2">
                               <button
@@ -4283,6 +4521,125 @@ export default function Clinical(): React.ReactElement {
                 >
                   {isAllocating ? 'Allocating...' : 'Confirm Allocation'}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* MODAL: QUICK NURSE HANDOVER */}
+      {/* ================================================================= */}
+      {quickHandoverBed && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 bg-black/75 backdrop-blur-xs"
+            onClick={() => setQuickHandoverBed(null)}
+          />
+          <div className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800 p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
+              <div>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">
+                  Bed {quickHandoverBed.bed_code} • Rm {quickHandoverBed.room_number}
+                </span>
+                <h3 className="text-xl font-bold font-mono text-white">Shift Handover & Care Transfer</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuickHandoverBed(null)}
+                className="text-zinc-400 hover:text-white text-sm font-mono"
+              >
+                ✕
+              </button>
+            </div>
+
+            {quickHandoverError && (
+              <div className="mb-4 p-3 bg-red-950 border border-red-800 text-red-200 text-xs font-mono">
+                {quickHandoverError}
+              </div>
+            )}
+
+            <form onSubmit={handleQuickHandoverSubmit} className="space-y-4 font-mono text-xs">
+              <div className="p-3 bg-zinc-950 border border-zinc-800 space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Patient:</span>
+                  <span className="text-zinc-200 font-bold">{quickHandoverBed.patient_name || `Patient #${quickHandoverBed.patient_id}`}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Current Assigned Nurse:</span>
+                  <span className="text-blue-400 font-semibold">{quickHandoverBed.assigned_nurse_name || 'Unassigned'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Acuity:</span>
+                  <span className="text-yellow-400">{quickHandoverBed.acuity_level || 'N/A'}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-zinc-400 mb-1.5 uppercase tracking-wider text-[11px]">
+                  Select Oncoming Nurse
+                </label>
+                <select
+                  value={quickHandoverNurseId}
+                  onChange={(e) => setQuickHandoverNurseId(e.target.value ? Number(e.target.value) : '')}
+                  required
+                  className="w-full bg-zinc-950 border border-zinc-700 p-2.5 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500"
+                >
+                  <option value="">Select Oncoming Nurse...</option>
+                  {nursesList.map((n) => (
+                    <option key={n.personnel_id} value={n.personnel_id}>
+                      {n.full_name} ({n.department}) {n.personnel_id === claims?.personnel_id ? '— (You)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="pt-2 flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={quickHandoverLoading || !quickHandoverNurseId}
+                    className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white py-2.5 font-bold uppercase tracking-wider transition-colors"
+                  >
+                    {quickHandoverLoading ? 'Transferring...' : 'Confirm Handover'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQuickHandoverBed(null)}
+                    className="px-4 border border-zinc-700 hover:border-zinc-500 text-zinc-300 py-2.5 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                {quickHandoverBed.assigned_nurse_id && (
+                  <button
+                    type="button"
+                    disabled={quickHandoverLoading}
+                    onClick={async () => {
+                      if (!quickHandoverBed.admission_id) return;
+                      setQuickHandoverLoading(true);
+                      setQuickHandoverError(null);
+                      try {
+                        const assignments = (await api.getNurseAssignments?.(quickHandoverBed.admission_id)) || [];
+                        const active = assignments.find((a) => a.status === 'ACTIVE');
+                        if (!active) {
+                          throw new Error('No active assignment found to release.');
+                        }
+                        await api.completeNurseAssignment?.(active.assignment_id);
+                        await fetchBeds({ silent: true });
+                        setQuickHandoverBed(null);
+                      } catch (err: unknown) {
+                        setQuickHandoverError(err instanceof Error ? err.message : 'Failed to end shift assignment.');
+                      } finally {
+                        setQuickHandoverLoading(false);
+                      }
+                    }}
+                    className="w-full border border-red-900/60 bg-red-950/40 hover:bg-red-900/60 text-red-300 py-2 font-mono text-[11px] uppercase tracking-wider transition-colors"
+                  >
+                    End Current Shift Assignment
+                  </button>
+                )}
               </div>
             </form>
           </div>

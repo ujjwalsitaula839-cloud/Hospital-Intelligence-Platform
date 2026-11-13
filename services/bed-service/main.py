@@ -13,6 +13,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from authz import (
+    authorize_and_release_equipment,
+    authorize_cleaning_completion,
+    authorize_cleaning_release,
+    claim_cleaning_task,
+)
 from database import get_db, init_db
 import models
 from redis_client import get_redis, lifespan as redis_lifespan
@@ -234,6 +240,7 @@ async def _build_bed_grid(db: AsyncSession) -> dict:
 
     active_admission_ids = [a.admission_id for a in active_allocs if a.admission_id and a.admission_id > 0]
     patient_admission_map = {}
+    nurse_admission_map = {}
     if active_admission_ids:
         try:
             raw_rows = (await db.execute(text("""
@@ -248,6 +255,23 @@ async def _build_bed_grid(db: AsyncSession) -> dict:
         except Exception as e:
             logger.warning("Could not resolve patient details for bed grid: %s", e)
 
+        try:
+            nurse_rows = (await db.execute(text("""
+                SELECT pna.admission_id, pna.nurse_id, pers.full_name AS nurse_name
+                FROM patient_nurse_assignment pna
+                LEFT JOIN personnel pers ON pna.nurse_id = pers.personnel_id
+                WHERE pna.admission_id = ANY(:adm_ids) AND pna.status = 'ACTIVE'
+                ORDER BY pna.start_datetime DESC
+            """), {"adm_ids": active_admission_ids})).mappings().all()
+            for nr in nurse_rows:
+                if nr["admission_id"] not in nurse_admission_map:
+                    nurse_admission_map[nr["admission_id"]] = {
+                        "nurse_id": nr["nurse_id"],
+                        "nurse_name": nr["nurse_name"]
+                    }
+        except Exception as e:
+            logger.warning("Could not resolve nurse assignments for bed grid: %s", e)
+
     bed_list = []
     for b in beds:
         active_alloc = active_bed_alloc_map.get(b.bed_id)
@@ -256,8 +280,11 @@ async def _build_bed_grid(db: AsyncSession) -> dict:
         updated_ts = b.update_datetime.isoformat() if b.update_datetime else None
 
         adm_info = patient_admission_map.get(active_adm_id) if active_adm_id else None
+        nurse_info = nurse_admission_map.get(active_adm_id) if active_adm_id else None
         patient_name = f"{adm_info['first_name']} {adm_info['last_name']}" if adm_info else None
         patient_id = adm_info["patient_id"] if adm_info else None
+        assigned_nurse_id = nurse_info["nurse_id"] if nurse_info else None
+        assigned_nurse_name = nurse_info["nurse_name"] if nurse_info else None
         acuity = adm_info["acuity_level"] if adm_info else None
         diagnosis = adm_info["primary_diagnosis"] if adm_info else None
 
@@ -274,6 +301,8 @@ async def _build_bed_grid(db: AsyncSession) -> dict:
             "encounter_id": active_adm_id,
             "patient_id": patient_id,
             "patient_name": patient_name,
+            "assigned_nurse_id": assigned_nurse_id,
+            "assigned_nurse_name": assigned_nurse_name,
             "acuity_level": acuity,
             "primary_diagnosis": diagnosis,
             "equipment": eq_list,
@@ -936,6 +965,17 @@ async def discharge_bed(
     }
 
 
+@app.post("/internal/cache/invalidate")
+async def internal_invalidate_cache(
+    current_user: Dict[str, Any] = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
+    redis: aioredis.Redis = Depends(get_redis)
+):
+    """Internal endpoint to invalidate bed grid cache and notify dashboards."""
+    await invalidate_grid_cache(redis)
+    await publish_event(redis, "BED_UPDATED", {"message": "Grid telemetry updated"}, actor="SYSTEM")
+    return {"status": "SUCCESS"}
+
+
 @app.post("/internal/admissions/{admission_id}/release")
 async def release_admission_assets(
     admission_id: int,
@@ -1071,15 +1111,7 @@ async def start_cleaning(
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    stmt = select(models.CleaningTask).options(selectinload(models.CleaningTask.bed)).where(models.CleaningTask.cleaning_id == cleaning_id)
-    result = await db.execute(stmt)
-    task = result.scalars().first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Cleaning task not found.")
-
-    task.status = "IN_PROGRESS"
-    task.started_datetime = func.now()
-    task.personnel_id = current_user["user_id"]
+    task = await claim_cleaning_task(db, cleaning_id, current_user)
 
     if task.bed:
         task.bed.status = "CLEANING_IN_PROGRESS"
@@ -1106,16 +1138,10 @@ async def complete_cleaning(
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    stmt = select(models.CleaningTask).options(selectinload(models.CleaningTask.bed)).where(models.CleaningTask.cleaning_id == cleaning_id)
-    result = await db.execute(stmt)
-    task = result.scalars().first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Cleaning task not found.")
+    task = await authorize_cleaning_completion(db, cleaning_id, current_user)
 
     task.status = "COMPLETED"
     task.completed_datetime = func.now()
-    if not task.personnel_id:
-        task.personnel_id = current_user["user_id"]
 
     if task.bed:
         task.bed.status = "AVAILABLE"
@@ -1134,6 +1160,32 @@ async def complete_cleaning(
     }, actor=current_user.get("full_name") or current_user.get("username") or f"Housekeeping #{current_user['user_id']}")
 
     return {"status": "SUCCESS", "message": f"Cleaning task #{cleaning_id} completed. Bed {task.bed.bed_code if task.bed else ''} is now AVAILABLE!"}
+
+
+class ReleaseCleaningRequest(BaseModel):
+    notes: Optional[str] = None
+
+
+@app.put("/cleaning/release/{cleaning_id}")
+async def release_cleaning(
+    cleaning_id: int,
+    req: Optional[ReleaseCleaningRequest] = None,
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.CLEANING_CREW)),
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis)
+):
+    """Release an IN_PROGRESS cleaning task back to PENDING queue for shift handover."""
+    notes = req.notes if req else None
+    task = await authorize_cleaning_release(db, cleaning_id, current_user, notes)
+    await db.commit()
+    await invalidate_grid_cache(redis)
+    await publish_event(redis, "CLEANING_RELEASED", {
+        "cleaning_id": cleaning_id,
+        "bed_id": task.bed_id,
+        "bed_code": task.bed.bed_code if task.bed else None,
+        "status": "PENDING"
+    }, actor=str(current_user["user_id"]))
+    return {"status": "SUCCESS", "message": f"Cleaning task #{cleaning_id} returned to PENDING queue."}
 
 
 @app.get("/equipment/types")
@@ -1371,16 +1423,11 @@ async def allocate_equipment(
 @app.put("/equipment/release/{equipment_allocation_id}")
 async def release_equipment(
     equipment_allocation_id: int,
-    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.CLEANING_CREW)),
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
-    alloc = await db.get(models.EquipmentAllocation, equipment_allocation_id)
-    if not alloc:
-        raise HTTPException(status_code=404, detail="Equipment allocation not found.")
-
-    alloc.status = "RELEASED"
-    alloc.end_datetime = func.now()
+    alloc = await authorize_and_release_equipment(db, equipment_allocation_id, current_user)
 
     eq = await db.get(models.Equipment, alloc.equipment_id)
     if eq:
