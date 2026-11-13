@@ -126,6 +126,24 @@ export default function Housekeeping(): React.ReactElement {
     }
   };
 
+  const handleRelease = async (id: number) => {
+    setActionLoading((prev) => ({ ...prev, [id]: true }));
+    setCardErrors((prev) => ({ ...prev, [id]: null }));
+
+    try {
+      await api.updateCleaningTask(id, {
+        status: 'release',
+        notes: notes[id]?.trim() || undefined,
+      });
+      await fetchTasks();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to release cleaning task.';
+      setCardErrors((prev) => ({ ...prev, [id]: message }));
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [id]: false }));
+    }
+  };
+
   const filteredTasks = tasks.filter((t) => t.status === activeTab);
 
   return (
@@ -286,14 +304,24 @@ export default function Housekeeping(): React.ReactElement {
                       {actionLoading[task.cleaning_id] ? 'Starting...' : 'Start Cleaning'}
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      disabled={actionLoading[task.cleaning_id]}
-                      onClick={() => handleComplete(task.cleaning_id)}
-                      className="w-full bg-white text-zinc-950 hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-400 py-2.5 text-xs font-mono uppercase tracking-wider font-semibold transition-colors"
-                    >
-                      {actionLoading[task.cleaning_id] ? 'Completing...' : 'Complete'}
-                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        disabled={actionLoading[task.cleaning_id]}
+                        onClick={() => handleRelease(task.cleaning_id)}
+                        className="w-full border border-zinc-700 hover:border-zinc-500 bg-zinc-900 text-zinc-300 hover:text-white disabled:bg-zinc-800 disabled:text-zinc-600 py-2.5 text-xs font-mono uppercase tracking-wider font-semibold transition-colors"
+                      >
+                        {actionLoading[task.cleaning_id] ? 'Releasing...' : 'Release'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={actionLoading[task.cleaning_id]}
+                        onClick={() => handleComplete(task.cleaning_id)}
+                        className="w-full bg-white text-zinc-950 hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-400 py-2.5 text-xs font-mono uppercase tracking-wider font-semibold transition-colors"
+                      >
+                        {actionLoading[task.cleaning_id] ? 'Completing...' : 'Complete'}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

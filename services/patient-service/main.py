@@ -14,6 +14,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import log_audit
+from authz import (
+    audit_phi_read,
+    authorize_nurse_assignment_completion,
+    verify_admission_care_scope,
+)
 from database import get_db, init_db
 import models
 from security import UserRole, require_roles, require_roles_or_internal
@@ -248,10 +253,17 @@ async def health_check(db: AsyncSession = Depends(get_db)):
 
 @app.get("/records", response_model=List[PatientResponse])
 async def get_patient_records(
+    limit: int = Query(200, ge=1, le=500, description="Maximum number of patient records per page"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
     current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(select(models.Patient).order_by(models.Patient.patient_id.desc()))
+    result = await db.execute(
+        select(models.Patient)
+        .order_by(models.Patient.patient_id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     return result.scalars().all()
 
 
@@ -262,6 +274,8 @@ async def search_patients(
     last_name: Optional[str] = Query(None),
     date_of_birth: Optional[date] = Query(None),
     phone: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=200, description="Maximum number of matching patient records"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
     current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
@@ -277,9 +291,9 @@ async def search_patients(
 
     stmt = select(models.Patient)
     if not filters:
-        stmt = stmt.order_by(models.Patient.patient_id.desc()).limit(20)
+        stmt = stmt.order_by(models.Patient.patient_id.desc()).limit(limit).offset(offset)
     else:
-        stmt = stmt.where(and_(*filters)).order_by(models.Patient.patient_id.asc())
+        stmt = stmt.where(and_(*filters)).order_by(models.Patient.patient_id.asc()).limit(limit).offset(offset)
 
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -372,6 +386,7 @@ async def get_patient_by_id(
     record = result.scalars().first()
     if not record:
         raise HTTPException(status_code=404, detail="Patient record not found.")
+    await audit_phi_read(db, current_user, "READ_PATIENT_CHART", "patient", patient_id)
     return record
 
 
@@ -514,7 +529,8 @@ async def discharge_admission(
     if admission.discharge_datetime is not None:
         return {"status": "SUCCESS", "message": f"Admission #{admission_id} is already discharged."}
 
-    admission.discharge_datetime = func.now()
+    actor_id = current_user.get("user_id")
+    role = (current_user.get("role") or "").upper()
 
     nurse_stmt = select(models.PatientNurseAssignment).where(
         and_(
@@ -523,6 +539,31 @@ async def discharge_admission(
         )
     )
     active_assignments = (await db.execute(nurse_stmt)).scalars().all()
+    active_nurse_ids = [na.nurse_id for na in active_assignments]
+
+    # BOLA Enforcement: An unassigned nurse cannot discharge another nurse's active patient
+    if active_nurse_ids and role == "NURSE" and actor_id not in active_nurse_ids:
+        logger.warning(
+            "BOLA discharge denied: nurse_id=%s tried to discharge admission_id=%s assigned to nurse_id(s)=%s",
+            actor_id, admission_id, active_nurse_ids
+        )
+        await log_audit(
+            db,
+            action="BOLA_DENIED",
+            user_id=actor_id,
+            resource_type="admission",
+            resource_id=admission_id,
+            details={"reason": "unassigned_nurse_discharge", "assigned_nurse_ids": active_nurse_ids},
+            audit_status="DENIED"
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: only the assigned nurse or an attending doctor may discharge this patient."
+        )
+
+    admission.discharge_datetime = func.now()
+
     for na in active_assignments:
         na.status = "COMPLETED"
         na.end_datetime = func.now()
@@ -557,6 +598,17 @@ async def discharge_admission(
     }
 
 
+async def _notify_bed_grid_invalidate():
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post(
+                f"{BED_SERVICE_URL}/internal/cache/invalidate",
+                headers={"X-Internal-Token": INTERNAL_SERVICE_SECRET}
+            )
+    except Exception as e:
+        logger.warning("Could not notify bed-service of cache invalidation: %s", e)
+
+
 @app.post("/admissions/{admission_id}/assign-nurse", response_model=NurseAssignmentResponse, status_code=status.HTTP_201_CREATED)
 @app.post("/encounters/{admission_id}/assign-nurse", response_model=NurseAssignmentResponse, status_code=status.HTTP_201_CREATED)
 async def assign_nurse_to_admission(
@@ -577,6 +629,33 @@ async def assign_nurse_to_admission(
         )
     )
     prev_assignments = (await db.execute(active_stmt)).scalars().all()
+    active_nurse_ids = [p.nurse_id for p in prev_assignments]
+
+    actor_id = current_user.get("user_id")
+    role = (current_user.get("role") or "").upper()
+
+    # BOLA Guard: If a patient is actively assigned to another nurse, an unassigned nurse cannot reassign them.
+    # Allowed: The currently assigned nurse (handover), or supervisor (DOCTOR, ADMIN).
+    if active_nurse_ids and role == "NURSE" and actor_id not in active_nurse_ids:
+        logger.warning(
+            "BOLA assignment denied: nurse_id=%s tried to reassign admission_id=%s assigned to %s",
+            actor_id, admission_id, active_nurse_ids
+        )
+        await log_audit(
+            db,
+            action="BOLA_DENIED",
+            user_id=actor_id,
+            resource_type="patient_nurse_assignment",
+            resource_id=admission_id,
+            details={"reason": "unauthorized_nurse_reassignment", "assigned_nurse_ids": active_nurse_ids},
+            audit_status="DENIED"
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: only the currently assigned nurse or a supervisor may hand over or reassign this patient."
+        )
+
     for prev in prev_assignments:
         prev.status = "COMPLETED"
         prev.end_datetime = func.now()
@@ -589,6 +668,7 @@ async def assign_nurse_to_admission(
     db.add(new_assignment)
     await db.commit()
     await db.refresh(new_assignment)
+    await _notify_bed_grid_invalidate()
     return new_assignment
 
 
@@ -599,13 +679,9 @@ async def complete_nurse_assignment(
     current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
-    assignment = await db.get(models.PatientNurseAssignment, assignment_id)
-    if not assignment:
-        raise HTTPException(status_code=404, detail="Nurse assignment not found.")
-
-    assignment.status = "COMPLETED"
-    assignment.end_datetime = func.now()
+    await authorize_nurse_assignment_completion(db, assignment_id, current_user)
     await db.commit()
+    await _notify_bed_grid_invalidate()
     return {"status": "SUCCESS", "message": f"Nurse assignment #{assignment_id} completed."}
 
 
@@ -734,6 +810,8 @@ async def get_admission_observations(
     db: AsyncSession = Depends(get_db)
 ):
     """Retrieves full chronological ledger of observations and corrections for an admission."""
+    await verify_admission_care_scope(db, admission_id, current_user)
+    await audit_phi_read(db, current_user, "READ_OBSERVATIONS", "admission", admission_id)
     stmt = select(models.PatientObservation).where(
         models.PatientObservation.admission_id == admission_id
     ).order_by(models.PatientObservation.observation_datetime.asc())

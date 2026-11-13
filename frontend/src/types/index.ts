@@ -58,6 +58,8 @@ export interface Bed {
   encounter_id?: number | null;
   patient_id?: number | null;
   patient_name?: string | null;
+  assigned_nurse_id?: number | null;
+  assigned_nurse_name?: string | null;
   acuity_level?: AcuityLevel | null;
   primary_diagnosis?: string | null;
   equipment?: string[];
@@ -217,6 +219,15 @@ export interface StaffMember {
   department: Department;
   is_active: boolean;
   must_change_password: boolean;
+}
+
+export interface NurseAssignment {
+  assignment_id: number;
+  admission_id: number;
+  nurse_id: number;
+  start_datetime: string;
+  end_datetime?: string | null;
+  status: string;
 }
 
 export interface EquipmentPrestageItem {

@@ -9,6 +9,7 @@ import type {
   CleaningTask,
   CleaningTaskStatus,
   EquipmentItem,
+  NurseAssignment,
   Observation,
   ObservationInput,
   Patient,
@@ -283,16 +284,38 @@ export const api = {
       | CleaningTaskStatus
       | 'start'
       | 'complete'
-      | { status: CleaningTaskStatus | 'start' | 'complete'; notes?: string }
+      | 'release'
+      | { status: CleaningTaskStatus | 'start' | 'complete' | 'release'; notes?: string }
   ): Promise<{ status: string; message: string }> => {
     const statusVal = typeof payload === 'string' ? payload : payload.status;
-    const action = statusVal === 'IN_PROGRESS' || statusVal === 'start' ? 'start' : 'complete';
+    const action =
+      statusVal === 'IN_PROGRESS' || statusVal === 'start'
+        ? 'start'
+        : statusVal === 'PENDING' || statusVal === 'release'
+          ? 'release'
+          : 'complete';
     const body = typeof payload === 'object' && payload.notes ? JSON.stringify({ notes: payload.notes }) : undefined;
     return request<{ status: string; message: string }>(`/beds/cleaning/${action}/${cleaningId}`, {
       method: 'PUT',
       body,
     });
   },
+
+  getNurses: (): Promise<StaffMember[]> => request<StaffMember[]>('/auth/personnel/nurses'),
+
+  getNurseAssignments: (admissionId: number): Promise<NurseAssignment[]> =>
+    request<NurseAssignment[]>(`/patients/admissions/${admissionId}/nurse-assignments`),
+
+  assignNurse: (admissionId: number, nurseId: number): Promise<NurseAssignment> =>
+    request<NurseAssignment>(`/patients/admissions/${admissionId}/assign-nurse`, {
+      method: 'POST',
+      body: JSON.stringify({ nurse_id: nurseId }),
+    }),
+
+  completeNurseAssignment: (assignmentId: number): Promise<{ status: string; message: string }> =>
+    request<{ status: string; message: string }>(`/patients/admissions/nurse-assignments/${assignmentId}/complete`, {
+      method: 'PUT',
+    }),
 
   getPatients: (): Promise<Patient[]> => request<Patient[]>('/patients/records'),
 
