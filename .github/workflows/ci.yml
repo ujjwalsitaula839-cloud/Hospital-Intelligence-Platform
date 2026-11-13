@@ -191,6 +191,7 @@ jobs:
         run: |
           python test_password_reset_workflow.py
           python test_concurrency_and_history.py
+          sleep 10
           python test_bola_authorization.py
           python test_edge_and_rate_limiting.py
 

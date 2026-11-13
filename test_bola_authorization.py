@@ -44,17 +44,21 @@ def test_result(name: str, condition: bool, detail: str = "") -> None:
 test_result.__test__ = False
 
 
-async def login_user(client: httpx.AsyncClient, email: str) -> dict:
-    resp = await client.post("/auth/login", json={"email": email, "password": TEST_PASSWORD})
-    assert resp.status_code == 200, f"Login failed for {email}: {resp.status_code} {resp.text}"
-    data = resp.json()
-    return {
-        "token": data["access_token"],
-        "headers": {"Authorization": f"Bearer {data['access_token']}"},
-        "personnel_id": data["personnel_id"],
-        "role": data["role"],
-        "username": data["username"],
-    }
+async def login_user(client: httpx.AsyncClient, email: str, max_retries: int = 4) -> dict:
+    for attempt in range(max_retries):
+        resp = await client.post("/auth/login", json={"email": email, "password": TEST_PASSWORD})
+        if resp.status_code == 429 and attempt < max_retries - 1:
+            await asyncio.sleep(2.5 * (attempt + 1))
+            continue
+        assert resp.status_code == 200, f"Login failed for {email}: {resp.status_code} {resp.text}"
+        data = resp.json()
+        return {
+            "token": data["access_token"],
+            "headers": {"Authorization": f"Bearer {data['access_token']}"},
+            "personnel_id": data["personnel_id"],
+            "role": data["role"],
+            "username": data["username"],
+        }
 
 
 async def complete_any_pending_cleaning(client: httpx.AsyncClient, admin_headers: dict, bed_code: str) -> None:
