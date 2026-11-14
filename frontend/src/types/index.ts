@@ -303,4 +303,27 @@ export interface ReserveRecommendedBedInput {
   prestage_equipment_ids?: number[];
 }
 
+export type IllnessSeverity = 'STABLE' | 'WATCHER' | 'UNSTABLE';
+
+export interface NurseHandoff {
+  handoff_id: number;
+  admission_id: number;
+  from_nurse_id: number;
+  to_nurse_id: number;
+  illness_severity: IllnessSeverity;
+  patient_summary?: string | null;
+  action_items?: string | null;
+  contingency_plan?: string | null;
+  create_datetime: string;
+}
+
+export interface HandoffCreateInput {
+  admission_id?: number;
+  to_nurse_id: number;
+  illness_severity: IllnessSeverity;
+  patient_summary?: string;
+  action_items?: string;
+  contingency_plan?: string;
+}
+
 

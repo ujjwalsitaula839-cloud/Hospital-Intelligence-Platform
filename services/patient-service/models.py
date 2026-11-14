@@ -39,6 +39,7 @@ class Admission(Base):
     patient = relationship("Patient", back_populates="admissions")
     nurse_assignments = relationship("PatientNurseAssignment", back_populates="admission", cascade="none")
     observations = relationship("PatientObservation", back_populates="admission", cascade="none")
+    handoffs = relationship("NurseHandoff", back_populates="admission", cascade="none")
 
     __table_args__ = (
         Index(
@@ -62,6 +63,27 @@ class PatientNurseAssignment(Base):
 
     # Relationships
     admission = relationship("Admission", back_populates="nurse_assignments")
+
+
+class NurseHandoff(Base):
+    """
+    I-PASS structured clinical shift handoff report per patient encounter.
+    Records illness severity, shift summary, oncoming action items, and contingency plans.
+    """
+    __tablename__ = "nurse_handoff"
+
+    handoff_id = Column(Integer, primary_key=True, index=True)
+    admission_id = Column(Integer, ForeignKey("admission.admission_id", ondelete="RESTRICT"), nullable=False, index=True)
+    from_nurse_id = Column(Integer, nullable=False, index=True)  # Logical FK to personnel.personnel_id
+    to_nurse_id = Column(Integer, nullable=False, index=True)    # Logical FK to personnel.personnel_id
+    illness_severity = Column(String(20), nullable=False, default="STABLE")  # STABLE, WATCHER, UNSTABLE
+    patient_summary = Column(Text, nullable=True)     # Situation & clinical course summary
+    action_items = Column(Text, nullable=True)        # Oncoming shift to-dos & pending items
+    contingency_plan = Column(Text, nullable=True)    # If-then plans and escalation parameters
+    create_datetime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    admission = relationship("Admission", back_populates="handoffs")
 
 
 class PatientObservation(Base):
@@ -113,6 +135,8 @@ from audit import AuditLog
 __all__ = [
     "Patient",
     "Admission",
+    "PatientNurseAssignment",
+    "NurseHandoff",
     "PatientObservation",
     "AuditLog"
 ]
