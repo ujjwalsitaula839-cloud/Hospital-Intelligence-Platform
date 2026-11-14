@@ -238,6 +238,42 @@ class NurseAssignmentResponse(BaseModel):
         from_attributes = True
 
 
+class HandoffItemCreate(BaseModel):
+    admission_id: Optional[int] = None
+    to_nurse_id: int
+    illness_severity: str = Field("STABLE", description="STABLE, WATCHER, or UNSTABLE")
+    patient_summary: Optional[str] = Field(None, max_length=2000)
+    action_items: Optional[str] = Field(None, max_length=2000)
+    contingency_plan: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("illness_severity")
+    @classmethod
+    def validate_severity(cls, v: str) -> str:
+        norm = (v or "").upper().strip()
+        if norm not in {"STABLE", "WATCHER", "UNSTABLE"}:
+            return "STABLE"
+        return norm
+
+
+class BatchHandoffRequest(BaseModel):
+    handoffs: List[HandoffItemCreate]
+
+
+class NurseHandoffResponse(BaseModel):
+    handoff_id: int
+    admission_id: int
+    from_nurse_id: int
+    to_nurse_id: int
+    illness_severity: str
+    patient_summary: Optional[str] = None
+    action_items: Optional[str] = None
+    contingency_plan: Optional[str] = None
+    create_datetime: datetime
+
+    class Config:
+        from_attributes = True
+
+
 @app.get("/health")
 async def health_check(db: AsyncSession = Depends(get_db)):
     try:
@@ -516,7 +552,9 @@ async def get_admissions_by_patient(
 
 
 @app.put("/admissions/discharge/{admission_id}")
+@app.put("/admissions/{admission_id}/discharge")
 @app.put("/encounters/discharge/{admission_id}")
+@app.put("/encounters/{admission_id}/discharge")
 async def discharge_admission(
     admission_id: int,
     current_user: dict = Depends(require_roles_or_internal(UserRole.NURSE, UserRole.DOCTOR)),
@@ -695,6 +733,160 @@ async def get_admission_nurse_assignments(
     stmt = select(models.PatientNurseAssignment).where(
         models.PatientNurseAssignment.admission_id == admission_id
     ).order_by(models.PatientNurseAssignment.start_datetime.desc())
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
+
+async def _execute_single_handoff(
+    db: AsyncSession,
+    admission_id: int,
+    item: HandoffItemCreate,
+    current_user: dict,
+) -> models.NurseHandoff:
+    admission = await db.get(models.Admission, admission_id)
+    if not admission or admission.discharge_datetime is not None:
+        raise HTTPException(status_code=400, detail=f"Admission #{admission_id} is discharged or does not exist.")
+
+    active_stmt = select(models.PatientNurseAssignment).where(
+        and_(
+            models.PatientNurseAssignment.admission_id == admission_id,
+            models.PatientNurseAssignment.status == "ACTIVE"
+        )
+    )
+    prev_assignments = (await db.execute(active_stmt)).scalars().all()
+    active_nurse_ids = [p.nurse_id for p in prev_assignments]
+
+    actor_id = current_user.get("user_id")
+    role = (current_user.get("role") or "").upper()
+
+    # BOLA Guard: If active assignments exist and actor is a NURSE, actor must be one of the assigned nurses
+    if active_nurse_ids and role == "NURSE" and actor_id not in active_nurse_ids:
+        logger.warning(
+            "BOLA handoff denied: nurse_id=%s tried to hand over admission_id=%s assigned to %s",
+            actor_id, admission_id, active_nurse_ids
+        )
+        await log_audit(
+            db,
+            action="BOLA_DENIED",
+            user_id=actor_id,
+            resource_type="nurse_handoff",
+            resource_id=admission_id,
+            details={"reason": "unauthorized_nurse_handoff", "assigned_nurse_ids": active_nurse_ids},
+            audit_status="DENIED"
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: only the currently assigned nurse or a supervisor may hand over this patient."
+        )
+
+    # Complete outgoing shift assignments
+    for prev in prev_assignments:
+        prev.status = "COMPLETED"
+        prev.end_datetime = func.now()
+
+    # Create new active oncoming shift assignment
+    new_assignment = models.PatientNurseAssignment(
+        admission_id=admission_id,
+        nurse_id=item.to_nurse_id,
+        status="ACTIVE"
+    )
+    db.add(new_assignment)
+
+    # Create structured handoff record
+    handoff = models.NurseHandoff(
+        admission_id=admission_id,
+        from_nurse_id=actor_id or 0,
+        to_nurse_id=item.to_nurse_id,
+        illness_severity=item.illness_severity,
+        patient_summary=sanitize_text(item.patient_summary, 2000),
+        action_items=sanitize_text(item.action_items, 2000),
+        contingency_plan=sanitize_text(item.contingency_plan, 2000),
+    )
+    db.add(handoff)
+
+    await log_audit(
+        db,
+        action="NURSE_HANDOFF_RECORDED",
+        user_id=actor_id,
+        resource_type="nurse_handoff",
+        resource_id=admission_id,
+        details={
+            "to_nurse_id": item.to_nurse_id,
+            "illness_severity": item.illness_severity,
+        },
+        audit_status="SUCCESS"
+    )
+    return handoff
+
+
+@app.post("/admissions/{admission_id}/handoff", response_model=NurseHandoffResponse, status_code=status.HTTP_201_CREATED)
+@app.post("/encounters/{admission_id}/handoff", response_model=NurseHandoffResponse, status_code=status.HTTP_201_CREATED)
+async def create_admission_handoff(
+    admission_id: int,
+    handoff_in: HandoffItemCreate,
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db)
+):
+    handoff = await _execute_single_handoff(db, admission_id, handoff_in, current_user)
+    await db.commit()
+    await db.refresh(handoff)
+    await _notify_bed_grid_invalidate()
+    return handoff
+
+
+@app.post("/handoff/batch", response_model=List[NurseHandoffResponse], status_code=status.HTTP_201_CREATED)
+async def create_batch_handoff(
+    batch_in: BatchHandoffRequest,
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db)
+):
+    if not batch_in.handoffs:
+        raise HTTPException(status_code=400, detail="Batch handoffs list cannot be empty.")
+
+    created_handoffs = []
+    for item in batch_in.handoffs:
+        if not item.admission_id:
+            raise HTTPException(status_code=400, detail="Each batch handoff item must include an admission_id.")
+        handoff = await _execute_single_handoff(db, item.admission_id, item, current_user)
+        created_handoffs.append(handoff)
+
+    await db.commit()
+    for h in created_handoffs:
+        await db.refresh(h)
+    await _notify_bed_grid_invalidate()
+    return created_handoffs
+
+
+@app.get("/admissions/{admission_id}/handoff/latest", response_model=Optional[NurseHandoffResponse])
+@app.get("/encounters/{admission_id}/handoff/latest", response_model=Optional[NurseHandoffResponse])
+async def get_latest_admission_handoff(
+    admission_id: int,
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = (
+        select(models.NurseHandoff)
+        .where(models.NurseHandoff.admission_id == admission_id)
+        .order_by(models.NurseHandoff.create_datetime.desc())
+        .limit(1)
+    )
+    res = await db.execute(stmt)
+    return res.scalars().first()
+
+
+@app.get("/admissions/{admission_id}/handoff/history", response_model=List[NurseHandoffResponse])
+@app.get("/encounters/{admission_id}/handoff/history", response_model=List[NurseHandoffResponse])
+async def get_admission_handoff_history(
+    admission_id: int,
+    current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = (
+        select(models.NurseHandoff)
+        .where(models.NurseHandoff.admission_id == admission_id)
+        .order_by(models.NurseHandoff.create_datetime.desc())
+    )
     res = await db.execute(stmt)
     return res.scalars().all()
 

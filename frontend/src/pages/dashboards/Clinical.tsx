@@ -11,6 +11,7 @@ import type {
   BedStatus,
   EquipmentItem,
   NurseAssignment,
+  NurseHandoff,
   Observation,
   ObservationInput,
   Patient,
@@ -20,6 +21,7 @@ import type {
 } from '../../types';
 import EmsIntakeForm from '../../components/ems/EmsIntakeForm';
 import EmsCallIntakeModal from '../../components/ems/EmsCallIntakeModal';
+import ShiftHandoffModal from '../../components/clinical/ShiftHandoffModal';
 import ThemeToggle from '../../components/navigation/ThemeToggle';
 import NotificationBell, { type AppNotification } from '../../components/navigation/NotificationBell';
 import ElonChatWidget from '../../components/elon/ElonChatWidget';
@@ -282,10 +284,8 @@ export default function Clinical(): React.ReactElement {
   const [assignmentLoading, setAssignmentLoading] = useState<Record<number, boolean>>({});
   const [assignmentError, setAssignmentError] = useState<Record<number, string | null>>({});
   const [onlyMyPatients, setOnlyMyPatients] = useState<boolean>(false);
-  const [quickHandoverBed, setQuickHandoverBed] = useState<Bed | null>(null);
-  const [quickHandoverNurseId, setQuickHandoverNurseId] = useState<number | ''>('');
-  const [quickHandoverLoading, setQuickHandoverLoading] = useState<boolean>(false);
-  const [quickHandoverError, setQuickHandoverError] = useState<string | null>(null);
+  const [shiftHandoffBed, setShiftHandoffBed] = useState<Bed | null>(null);
+  const [latestHandoffMap, setLatestHandoffMap] = useState<Record<number, NurseHandoff | null>>({});
 
   // Vitals Charting Modal / Input Form State
   const [chartingAdmissionId, setChartingAdmissionId] = useState<number | null>(null);
@@ -1027,6 +1027,7 @@ export default function Clinical(): React.ReactElement {
       const data = await api.getAdmissions(patient.patient_id);
       setPatientAdmissions(data);
       const assignmentsMap: Record<number, NurseAssignment | null> = {};
+      const handoffsMap: Record<number, NurseHandoff | null> = {};
       await Promise.all(
         data.map(async (adm) => {
           try {
@@ -1035,9 +1036,16 @@ export default function Clinical(): React.ReactElement {
           } catch {
             assignmentsMap[adm.admission_id] = null;
           }
+          try {
+            const h = await api.getLatestHandoff(adm.admission_id);
+            handoffsMap[adm.admission_id] = h;
+          } catch {
+            handoffsMap[adm.admission_id] = null;
+          }
         })
       );
       setNurseAssignments(assignmentsMap);
+      setLatestHandoffMap(handoffsMap);
     } catch {
       setPatientAdmissions([]);
     } finally {
@@ -1074,23 +1082,6 @@ export default function Clinical(): React.ReactElement {
       setAssignmentError((prev) => ({ ...prev, [admissionId]: msg }));
     } finally {
       setAssignmentLoading((prev) => ({ ...prev, [admissionId]: false }));
-    }
-  };
-
-  const handleQuickHandoverSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!quickHandoverBed?.admission_id || !quickHandoverNurseId) return;
-    setQuickHandoverLoading(true);
-    setQuickHandoverError(null);
-    try {
-      await api.assignNurse(quickHandoverBed.admission_id, Number(quickHandoverNurseId));
-      await fetchBeds({ silent: true });
-      setQuickHandoverBed(null);
-      setQuickHandoverNurseId('');
-    } catch (err: unknown) {
-      setQuickHandoverError(err instanceof Error ? err.message : 'Failed to transfer care.');
-    } finally {
-      setQuickHandoverLoading(false);
     }
   };
 
@@ -1914,6 +1905,25 @@ export default function Clinical(): React.ReactElement {
                     🩺 My Patients ({beds.filter((b) => b.assigned_nurse_id === claims?.personnel_id).length})
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const myBeds = beds.filter((b) => b.assigned_nurse_id === claims?.personnel_id && b.admission_id);
+                    if (myBeds.length > 0) {
+                      setShiftHandoffBed(myBeds[0]);
+                    } else {
+                      const anyOcc = beds.find((b) => b.admission_id);
+                      if (anyOcc) setShiftHandoffBed(anyOcc);
+                    }
+                  }}
+                  className="ml-1.5 px-2.5 py-1 text-[11px] font-mono uppercase tracking-wider border border-zinc-800 bg-zinc-900 text-emerald-400 hover:border-emerald-600 hover:text-emerald-300 transition-colors flex items-center gap-1.5"
+                  title="Open Structured Shift Handoff Report (I-PASS)"
+                >
+                  <span>📋 Shift Handoff</span>
+                  <span className="px-1.5 py-0.2 bg-emerald-950/80 border border-emerald-700/60 rounded-xs text-[10px] text-emerald-300 font-bold">
+                    {beds.filter((b) => b.assigned_nurse_id === claims?.personnel_id && b.admission_id).length}
+                  </span>
+                </button>
               </div>
 
               {(bedStatusFilter !== 'ALL' || onlyMyPatients) && (
@@ -2093,12 +2103,10 @@ export default function Clinical(): React.ReactElement {
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      setQuickHandoverBed(bed);
-                                      setQuickHandoverNurseId(bed.assigned_nurse_id || '');
-                                      setQuickHandoverError(null);
+                                      setShiftHandoffBed(bed);
                                     }}
                                     className="text-[9px] px-1.5 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors shrink-0"
-                                    title="Quick Shift Handover"
+                                    title="Clinical Shift Handover (I-PASS)"
                                   >
                                     Handover
                                   </button>
@@ -2181,12 +2189,10 @@ export default function Clinical(): React.ReactElement {
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      setQuickHandoverBed(bed);
-                                      setQuickHandoverNurseId(bed.assigned_nurse_id || '');
-                                      setQuickHandoverError(null);
+                                      setShiftHandoffBed(bed);
                                     }}
                                     className="text-[9px] px-1.5 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors shrink-0"
-                                    title="Quick Shift Handover"
+                                    title="Clinical Shift Handover (I-PASS)"
                                   >
                                     Handover
                                   </button>
@@ -4152,6 +4158,54 @@ export default function Clinical(): React.ReactElement {
                             <span>Admitted: {new Date(adm.arrival_datetime).toLocaleDateString()}</span>
                           </div>
 
+                          {/* Shift Handoff Report Summary (I-PASS) */}
+                          {latestHandoffMap[adm.admission_id] && (
+                            <div className="mt-2.5 p-2.5 bg-blue-950/20 border border-blue-900/60 rounded-xs space-y-1.5 text-[11px]">
+                              <div className="flex items-center justify-between border-b border-blue-900/40 pb-1">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300">
+                                  📋 Latest Shift Handoff
+                                </span>
+                                <span
+                                  className={`px-1.5 py-0.2 text-[9px] font-bold border rounded-xs ${
+                                    latestHandoffMap[adm.admission_id]?.illness_severity === 'STABLE'
+                                      ? 'bg-emerald-950/80 border-emerald-700 text-emerald-300'
+                                      : latestHandoffMap[adm.admission_id]?.illness_severity === 'WATCHER'
+                                      ? 'bg-yellow-950/80 border-yellow-700 text-yellow-300'
+                                      : 'bg-red-950/80 border-red-700 text-red-300'
+                                  }`}
+                                >
+                                  {latestHandoffMap[adm.admission_id]?.illness_severity}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-zinc-400">
+                                Handed off by{' '}
+                                <span className="text-zinc-200 font-semibold">
+                                  {nursesList.find((n) => n.personnel_id === latestHandoffMap[adm.admission_id]?.from_nurse_id)?.full_name ||
+                                    `Nurse #${latestHandoffMap[adm.admission_id]?.from_nurse_id}`}
+                                </span>{' '}
+                                • {new Date(latestHandoffMap[adm.admission_id]!.create_datetime).toLocaleDateString()} {new Date(latestHandoffMap[adm.admission_id]!.create_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </div>
+                              {latestHandoffMap[adm.admission_id]?.patient_summary && (
+                                <div className="text-zinc-300">
+                                  <span className="text-zinc-500 font-semibold">Summary: </span>
+                                  {latestHandoffMap[adm.admission_id]?.patient_summary}
+                                </div>
+                              )}
+                              {latestHandoffMap[adm.admission_id]?.action_items && (
+                                <div className="text-zinc-300">
+                                  <span className="text-zinc-500 font-semibold">To-Dos: </span>
+                                  {latestHandoffMap[adm.admission_id]?.action_items}
+                                </div>
+                              )}
+                              {latestHandoffMap[adm.admission_id]?.contingency_plan && (
+                                <div className="text-zinc-300">
+                                  <span className="text-zinc-500 font-semibold">Contingency: </span>
+                                  {latestHandoffMap[adm.admission_id]?.contingency_plan}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           {/* Nurse Assignment & Handover Section */}
                           <div className="mt-2.5 pt-2 border-t border-zinc-800 space-y-1.5">
                             <div className="flex items-center justify-between text-[11px]">
@@ -4163,6 +4217,35 @@ export default function Clinical(): React.ReactElement {
                                   : 'Unassigned'}
                               </span>
                             </div>
+
+                            {isActive && (
+                              <div className="pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const targetBed: Bed = beds.find((b) => b.admission_id === adm.admission_id) || {
+                                      bed_id: 0,
+                                      bed_code: 'Chart',
+                                      room_number: 'Chart',
+                                      department: 'EMERGENCY',
+                                      bed_type: 'STANDARD',
+                                      status: 'OCCUPIED' as BedStatus,
+                                      version: 1,
+                                      admission_id: adm.admission_id,
+                                      patient_id: chartPatient.patient_id,
+                                      patient_name: `${chartPatient.first_name} ${chartPatient.last_name}`,
+                                      assigned_nurse_id: nurseAssignments[adm.admission_id]?.nurse_id,
+                                      acuity_level: adm.acuity_level,
+                                      equipment: [],
+                                    };
+                                    setShiftHandoffBed(targetBed);
+                                  }}
+                                  className="w-full bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/50 text-emerald-300 py-1.5 px-2 text-[11px] font-mono font-semibold tracking-wider transition-colors flex items-center justify-center gap-1.5"
+                                >
+                                  <span>📋 Shift Handoff (I-PASS)</span>
+                                </button>
+                              </div>
+                            )}
 
                             {isActive && (
                               <div className="flex items-center gap-1.5 pt-1">
@@ -4528,123 +4611,19 @@ export default function Clinical(): React.ReactElement {
       )}
 
       {/* ================================================================= */}
-      {/* MODAL: QUICK NURSE HANDOVER */}
+      {/* MODAL: CLINICAL NURSE HANDOFF (I-PASS) */}
       {/* ================================================================= */}
-      {quickHandoverBed && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div
-            className="fixed inset-0 bg-black/75 backdrop-blur-xs"
-            onClick={() => setQuickHandoverBed(null)}
-          />
-          <div className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800 p-6 shadow-2xl">
-            <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
-              <div>
-                <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">
-                  Bed {quickHandoverBed.bed_code} • Rm {quickHandoverBed.room_number}
-                </span>
-                <h3 className="text-xl font-bold font-mono text-white">Shift Handover & Care Transfer</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setQuickHandoverBed(null)}
-                className="text-zinc-400 hover:text-white text-sm font-mono"
-              >
-                ✕
-              </button>
-            </div>
-
-            {quickHandoverError && (
-              <div className="mb-4 p-3 bg-red-950 border border-red-800 text-red-200 text-xs font-mono">
-                {quickHandoverError}
-              </div>
-            )}
-
-            <form onSubmit={handleQuickHandoverSubmit} className="space-y-4 font-mono text-xs">
-              <div className="p-3 bg-zinc-950 border border-zinc-800 space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Patient:</span>
-                  <span className="text-zinc-200 font-bold">{quickHandoverBed.patient_name || `Patient #${quickHandoverBed.patient_id}`}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Current Assigned Nurse:</span>
-                  <span className="text-blue-400 font-semibold">{quickHandoverBed.assigned_nurse_name || 'Unassigned'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Acuity:</span>
-                  <span className="text-yellow-400">{quickHandoverBed.acuity_level || 'N/A'}</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-zinc-400 mb-1.5 uppercase tracking-wider text-[11px]">
-                  Select Oncoming Nurse
-                </label>
-                <select
-                  value={quickHandoverNurseId}
-                  onChange={(e) => setQuickHandoverNurseId(e.target.value ? Number(e.target.value) : '')}
-                  required
-                  className="w-full bg-zinc-950 border border-zinc-700 p-2.5 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-500"
-                >
-                  <option value="">Select Oncoming Nurse...</option>
-                  {nursesList.map((n) => (
-                    <option key={n.personnel_id} value={n.personnel_id}>
-                      {n.full_name} ({n.department}) {n.personnel_id === claims?.personnel_id ? '— (You)' : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="pt-2 flex flex-col gap-2">
-                <div className="flex gap-2">
-                  <button
-                    type="submit"
-                    disabled={quickHandoverLoading || !quickHandoverNurseId}
-                    className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white py-2.5 font-bold uppercase tracking-wider transition-colors"
-                  >
-                    {quickHandoverLoading ? 'Transferring...' : 'Confirm Handover'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setQuickHandoverBed(null)}
-                    className="px-4 border border-zinc-700 hover:border-zinc-500 text-zinc-300 py-2.5 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-
-                {quickHandoverBed.assigned_nurse_id && (
-                  <button
-                    type="button"
-                    disabled={quickHandoverLoading}
-                    onClick={async () => {
-                      if (!quickHandoverBed.admission_id) return;
-                      setQuickHandoverLoading(true);
-                      setQuickHandoverError(null);
-                      try {
-                        const assignments = (await api.getNurseAssignments?.(quickHandoverBed.admission_id)) || [];
-                        const active = assignments.find((a) => a.status === 'ACTIVE');
-                        if (!active) {
-                          throw new Error('No active assignment found to release.');
-                        }
-                        await api.completeNurseAssignment?.(active.assignment_id);
-                        await fetchBeds({ silent: true });
-                        setQuickHandoverBed(null);
-                      } catch (err: unknown) {
-                        setQuickHandoverError(err instanceof Error ? err.message : 'Failed to end shift assignment.');
-                      } finally {
-                        setQuickHandoverLoading(false);
-                      }
-                    }}
-                    className="w-full border border-red-900/60 bg-red-950/40 hover:bg-red-900/60 text-red-300 py-2 font-mono text-[11px] uppercase tracking-wider transition-colors"
-                  >
-                    End Current Shift Assignment
-                  </button>
-                )}
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <ShiftHandoffModal
+        isOpen={!!shiftHandoffBed}
+        initialBed={shiftHandoffBed}
+        allBeds={beds}
+        nursesList={nursesList}
+        currentUserId={claims?.personnel_id}
+        onClose={() => setShiftHandoffBed(null)}
+        onSuccess={async () => {
+          await fetchBeds({ silent: true });
+        }}
+      />
 
       {/* ================================================================= */}
       {/* MODAL: EMS RADIO PATCH & INBOUND CALL INTAKE (ACCESSIBLE ANYWHERE) */}

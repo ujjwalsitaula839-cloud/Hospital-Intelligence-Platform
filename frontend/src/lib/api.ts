@@ -10,6 +10,8 @@ import type {
   CleaningTaskStatus,
   EquipmentItem,
   NurseAssignment,
+  NurseHandoff,
+  HandoffCreateInput,
   Observation,
   ObservationInput,
   Patient,
@@ -316,6 +318,24 @@ export const api = {
     request<{ status: string; message: string }>(`/patients/admissions/nurse-assignments/${assignmentId}/complete`, {
       method: 'PUT',
     }),
+
+  createHandoff: (admissionId: number, data: HandoffCreateInput): Promise<NurseHandoff> =>
+    request<NurseHandoff>(`/patients/admissions/${admissionId}/handoff`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  createBatchHandoff: (handoffs: HandoffCreateInput[]): Promise<NurseHandoff[]> =>
+    request<NurseHandoff[]>('/patients/handoff/batch', {
+      method: 'POST',
+      body: JSON.stringify({ handoffs }),
+    }),
+
+  getLatestHandoff: (admissionId: number): Promise<NurseHandoff | null> =>
+    request<NurseHandoff | null>(`/patients/admissions/${admissionId}/handoff/latest`),
+
+  getHandoffHistory: (admissionId: number): Promise<NurseHandoff[]> =>
+    request<NurseHandoff[]>(`/patients/admissions/${admissionId}/handoff/history`),
 
   getPatients: (): Promise<Patient[]> => request<Patient[]>('/patients/records'),
 

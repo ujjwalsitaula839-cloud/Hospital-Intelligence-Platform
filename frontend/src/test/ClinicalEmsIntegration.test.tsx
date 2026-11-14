@@ -39,6 +39,20 @@ vi.mock('../lib/api', () => ({
     getNurseAssignments: vi.fn().mockResolvedValue([]),
     assignNurse: vi.fn(),
     completeNurseAssignment: vi.fn(),
+    createHandoff: vi.fn().mockResolvedValue({
+      handoff_id: 1,
+      admission_id: 1,
+      from_nurse_id: 10,
+      to_nurse_id: 11,
+      illness_severity: 'STABLE',
+      patient_summary: 'Stable course',
+      action_items: 'Monitor vitals',
+      contingency_plan: 'Call MD if needed',
+      create_datetime: new Date().toISOString(),
+    }),
+    createBatchHandoff: vi.fn().mockResolvedValue([]),
+    getLatestHandoff: vi.fn().mockResolvedValue(null),
+    getHandoffHistory: vi.fn().mockResolvedValue([]),
     recommendBed: vi.fn().mockResolvedValue({
       status: 'SUCCESS',
       recommendation: {
