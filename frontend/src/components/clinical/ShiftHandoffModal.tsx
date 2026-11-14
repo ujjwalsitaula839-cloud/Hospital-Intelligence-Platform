@@ -54,12 +54,8 @@ export default function ShiftHandoffModal({
       (b) => b.admission_id && b.assigned_nurse_id === currentUserId
     );
 
-    let targets: Bed[] = [];
-    if (isAssigned && myAssignedBeds.length > 0) {
-      targets = myAssignedBeds;
-    } else {
-      targets = [initialBed];
-    }
+    const targets: Bed[] =
+      isAssigned && myAssignedBeds.length > 0 ? myAssignedBeds : [initialBed];
 
     const clickedIdx = targets.findIndex((b) => b.bed_id === initialBed.bed_id);
     setActiveIndex(clickedIdx >= 0 ? clickedIdx : 0);

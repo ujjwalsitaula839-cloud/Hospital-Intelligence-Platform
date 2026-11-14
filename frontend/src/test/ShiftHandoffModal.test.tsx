@@ -130,7 +130,10 @@ describe('ShiftHandoffModal Component (I-PASS Framework)', () => {
         status: 'ACTIVE',
       },
     ]);
-    vi.mocked(api.completeNurseAssignment).mockResolvedValue(undefined as any);
+    vi.mocked(api.completeNurseAssignment).mockResolvedValue({
+      status: 'SUCCESS',
+      message: 'Shift assignment completed',
+    });
   });
 
   it('renders modal header, demographic details, and auto-populated vitals', async () => {
