@@ -20,17 +20,22 @@ import warnings
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+CATALOG_PATH = HERE / "check_catalog.json"
+CATALOG = json.loads(CATALOG_PATH.read_text(encoding="utf-8")) if CATALOG_PATH.exists() else {}
+
 
 def _describe(test):
     method = getattr(test, test._testMethodName)
     doc = (method.__doc__ or "").strip().splitlines()
+    entry = CATALOG.get(test._testMethodName)
+    finding = getattr(method, "finding", "") or (entry[0] if entry else "")
     return {
         "id": test._testMethodName,
         "group": type(test).__name__,
         "description": doc[0] if doc else test._testMethodName.replace("_", " "),
         "section": getattr(method, "hipaa_section", ""),
         "safeguard": getattr(method, "hipaa_safeguard", ""),
-        "finding": getattr(method, "finding", ""),
+        "finding": finding,
         "gap": getattr(method, "known_gap", ""),
     }
 

@@ -180,9 +180,32 @@ describe('ShiftHandoffModal Component (I-PASS Framework)', () => {
     render(<ShiftHandoffModal {...defaultProps} />);
 
     await waitFor(() => expect(screen.getByText(/No vitals recorded for this stay yet/i)).toBeInTheDocument());
+    expect(screen.getByText(/No observations on file/i)).toBeInTheDocument();
     for (const fabricated of ['74 bpm', '120/80', '98%', '37.0 °C', '16/m']) {
       expect(screen.queryByText(fabricated)).not.toBeInTheDocument();
     }
+  });
+
+  it('shows loading state while vitals request is in flight', async () => {
+    vi.mocked(api.getObservations).mockReturnValue(new Promise(() => {}));
+
+    render(<ShiftHandoffModal {...defaultProps} />);
+
+    expect(screen.getByText('Loading vitals…')).toBeInTheDocument();
+    expect(screen.getByText('Loading the latest vitals…')).toBeInTheDocument();
+    expect(screen.queryByText(/No vitals recorded/i)).not.toBeInTheDocument();
+  });
+
+  it('shows error state when vitals request fails', async () => {
+    vi.mocked(api.getObservations).mockRejectedValue(new Error('Fetch failed'));
+
+    render(<ShiftHandoffModal {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Vitals unavailable')).toBeInTheDocument();
+      expect(screen.getByText('Unable to load the latest vitals right now.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/No vitals recorded/i)).not.toBeInTheDocument();
   });
 
   it('displays incoming shift handoff notes from the previous nurse', async () => {
