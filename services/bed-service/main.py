@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from audit import log_audit
 from authz import (
     authorize_and_release_equipment,
     authorize_cleaning_completion,
@@ -331,7 +332,7 @@ async def get_bed_grid(
 @app.post("/create")
 async def create_bed(
     bed_data: BedCreate,
-    current_user: Dict[str, Any] = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR)),
+    current_user: Dict[str, Any] = Depends(require_roles(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis)
 ):
@@ -348,6 +349,16 @@ async def create_bed(
         version=1
     )
     db.add(new_bed)
+
+    await log_audit(
+        db,
+        action="BED_CREATED",
+        user_id=current_user["user_id"],
+        resource_type="bed",
+        resource_id=None,
+        details={"bed_code": new_bed.bed_code, "department": new_bed.department},
+        audit_status="SUCCESS"
+    )
     await db.commit()
     await db.refresh(new_bed)
 
@@ -358,6 +369,7 @@ async def create_bed(
         "department": new_bed.department,
         "status": new_bed.status
     }, actor=str(current_user["user_id"]))
+    return new_bed
 
 async def _create_or_update_cleaning_task(
     db: AsyncSession,
@@ -485,6 +497,16 @@ async def admin_update_bed_status(
     bed.version = new_version
     bed.update_datetime = func.now()
 
+    await log_audit(
+        db,
+        action="ADMIN_BED_STATUS_OVERRIDE",
+        user_id=current_user["user_id"],
+        resource_type="bed",
+        resource_id=bed.bed_id,
+        details={"bed_code": bed.bed_code, "new_status": target_status, "reason": req.reason},
+        audit_status="SUCCESS"
+    )
+
     await db.commit()
     await invalidate_grid_cache(redis)
     await publish_event(redis, "BED_STATUS_CHANGED", {
@@ -584,6 +606,16 @@ async def _execute_bed_reservation(
     # Auto-resolve any leftover active cleaning tasks for this newly reserved bed
     await _resolve_active_cleaning_tasks(
         db, bed.bed_id, user_id, f"Auto-resolved: Bed reserved for admission #{admission_id}"
+    )
+
+    await log_audit(
+        db,
+        action="BED_RESERVED",
+        user_id=user_id,
+        resource_type="bed",
+        resource_id=bed.bed_id,
+        details={"bed_code": bed.bed_code, "admission_id": admission_id},
+        audit_status="SUCCESS"
     )
 
     try:
@@ -731,6 +763,16 @@ async def confirm_admission(
         active_alloc.status = "OCCUPIED"
         active_alloc.update_datetime = func.now()
 
+    await log_audit(
+        db,
+        action="BED_ADMITTED",
+        user_id=current_user["user_id"],
+        resource_type="bed",
+        resource_id=bed.bed_id,
+        details={"bed_code": bed.bed_code, "admission_id": active_alloc.admission_id if active_alloc else None},
+        audit_status="SUCCESS"
+    )
+
     await db.commit()
     await invalidate_grid_cache(redis)
     await publish_event(redis, "BED_OCCUPIED", {
@@ -831,6 +873,20 @@ async def transfer_patient_bed(
         notes=f"Auto-generated on patient transfer of admission #{admission_id} to {to_bed.bed_code}"
     )
 
+    await log_audit(
+        db,
+        action="BED_TRANSFER",
+        user_id=personnel_id,
+        resource_type="bed",
+        resource_id=to_bed.bed_id,
+        details={
+            "from_bed": req.from_bed_code.upper(),
+            "to_bed": req.to_bed_code.upper(),
+            "admission_id": admission_id,
+        },
+        audit_status="SUCCESS"
+    )
+
     try:
         await db.commit()
     except IntegrityError:
@@ -878,20 +934,33 @@ async def _release_admission_equipment(db: AsyncSession, admission_id: int) -> L
 
 
 async def _notify_patient_discharge(admission_id: int, user_id: Any, role: Any) -> None:
-    """Best-effort notification to patient service on bed discharge."""
+    """Authoritative notification to patient service on bed discharge. Propagates BOLA 403/400 errors."""
     headers = {
         "X-User-Id": str(user_id),
         "X-User-Role": str(role),
+        "X-Gateway-Secret": INTERNAL_SERVICE_SECRET,
         "X-Internal-Token": INTERNAL_SERVICE_SECRET,
     }
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=5.0) as client:
         try:
-            await client.put(
+            resp = await client.put(
                 f"{PATIENT_SERVICE_URL}/admissions/discharge/{admission_id}",
                 headers=headers
             )
+            if resp.status_code == 403:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: only the assigned nurse or an attending doctor may discharge this patient."
+                )
+            if resp.status_code == 400:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=resp.json().get("detail", "Cannot discharge admission.")
+                )
+        except HTTPException:
+            raise
         except httpx.RequestError as e:
-            logger.warning("Could not notify patient service during discharge: %s", e)
+            logger.warning("Could not reach patient service during discharge: %s", e)
 
 
 @app.put("/discharge/{bed_code}")
@@ -922,12 +991,14 @@ async def discharge_bed(
     active_alloc = alloc_res.scalars().first()
     discharged_admission_id = active_alloc.admission_id if active_alloc else None
 
+    # Step 1: Validate care-team assignment & discharge admission in patient-service FIRST
+    if discharged_admission_id:
+        await _notify_patient_discharge(discharged_admission_id, current_user["user_id"], current_user["role"])
+        await _release_admission_equipment(db, discharged_admission_id)
+
     if active_alloc:
         active_alloc.status = "COMPLETED"
         active_alloc.end_datetime = func.now()
-
-    if discharged_admission_id:
-        await _release_admission_equipment(db, discharged_admission_id)
 
     stmt = (
         update(models.Bed)
@@ -942,10 +1013,17 @@ async def discharge_bed(
         allocation_id=active_alloc.allocation_id if active_alloc else None,
         notes=f"Auto-generated on discharge of admission #{discharged_admission_id or 'N/A'}"
     )
-    await db.commit()
 
-    if discharged_admission_id:
-        await _notify_patient_discharge(discharged_admission_id, current_user["user_id"], current_user["role"])
+    await log_audit(
+        db,
+        action="BED_DISCHARGED",
+        user_id=current_user["user_id"],
+        resource_type="bed",
+        resource_id=bed.bed_id,
+        details={"bed_code": bed.bed_code, "admission_id": discharged_admission_id},
+        audit_status="SUCCESS"
+    )
+    await db.commit()
 
     await invalidate_grid_cache(redis)
     await publish_event(redis, "BED_DIRTY", {

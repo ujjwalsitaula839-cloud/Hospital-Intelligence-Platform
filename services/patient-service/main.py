@@ -865,6 +865,8 @@ async def get_latest_admission_handoff(
     current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
+    await verify_admission_care_scope(db, admission_id, current_user)
+    await audit_phi_read(db, current_user, "READ_NURSE_HANDOFF", "admission", admission_id, details={"view": "latest"})
     stmt = (
         select(models.NurseHandoff)
         .where(models.NurseHandoff.admission_id == admission_id)
@@ -882,6 +884,8 @@ async def get_admission_handoff_history(
     current_user: dict = Depends(require_roles(UserRole.NURSE, UserRole.DOCTOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db)
 ):
+    await verify_admission_care_scope(db, admission_id, current_user)
+    await audit_phi_read(db, current_user, "READ_NURSE_HANDOFF", "admission", admission_id, details={"view": "history"})
     stmt = (
         select(models.NurseHandoff)
         .where(models.NurseHandoff.admission_id == admission_id)
@@ -952,6 +956,14 @@ async def record_observation(
     admission = await db.get(models.Admission, admission_id)
     if not admission:
         raise HTTPException(status_code=404, detail="Admission record not found.")
+
+    if admission.discharge_datetime is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot chart vital observations onto discharged admission #{admission_id}."
+        )
+
+    await verify_admission_care_scope(db, admission_id, current_user)
 
     if obs_in.is_correction:
         prior = await db.get(models.PatientObservation, obs_in.corrects_observation_id)

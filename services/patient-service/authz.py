@@ -16,9 +16,9 @@ VALID_BOLA_MODES = {"off", "audit_only", "enforce"}
 
 
 def get_bola_policy_mode() -> str:
-    """Return configured BOLA care-team policy mode (off, audit_only, enforce)."""
-    mode = os.getenv("BOLA_POLICY_MODE", "audit_only").strip().lower()
-    return mode if mode in VALID_BOLA_MODES else "audit_only"
+    """Return configured BOLA care-team policy mode (off, audit_only, enforce). Defaults to enforce for zero-trust security."""
+    mode = os.getenv("BOLA_POLICY_MODE", "enforce").strip().lower()
+    return mode if mode in VALID_BOLA_MODES else "enforce"
 
 
 async def authorize_nurse_assignment_completion(

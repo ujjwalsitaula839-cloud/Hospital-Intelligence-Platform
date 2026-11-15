@@ -98,6 +98,19 @@ class TestPatientServiceBolaAuthz(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 422)
 
+    def test_record_observation_blocks_discharged_admission_with_400(self):
+        admission = MagicMock(admission_id=88, discharge_datetime="2026-11-14T10:00:00Z")
+        db = AsyncMock()
+        db.get = AsyncMock(return_value=admission)
+
+        obs_in = main.ObservationCreate(heart_rate_bpm=75)
+        user = {"user_id": 10, "role": "NURSE"}
+
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(main.record_observation(88, obs_in, user, db))
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("discharged", ctx.exception.detail.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
