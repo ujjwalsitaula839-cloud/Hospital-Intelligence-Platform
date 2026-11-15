@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
+import { getBedStatusStyle } from '../../lib/bedStatus';
 import type {
   AcuityLevel,
   Admission,
@@ -27,24 +28,6 @@ import NotificationBell, { type AppNotification } from '../../components/navigat
 import ElonChatWidget from '../../components/elon/ElonChatWidget';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-
-function getStatusBadge(status: BedStatus): { text: string; className: string } {
-  switch (status) {
-    case 'AVAILABLE':
-      return { text: 'AVAILABLE', className: 'bg-green-950 text-green-300 border border-green-700' };
-    case 'RESERVED':
-      return { text: 'RESERVED', className: 'bg-yellow-950 text-yellow-300 border border-yellow-700' };
-    case 'OCCUPIED':
-      return { text: 'OCCUPIED', className: 'bg-red-950 text-red-300 border border-red-700' };
-    case 'DIRTY':
-      return { text: 'DIRTY', className: 'bg-orange-950 text-orange-300 border border-orange-700' };
-    case 'CLEANING_IN_PROGRESS':
-      return { text: 'CLEANING', className: 'bg-blue-950 text-blue-300 border border-blue-700' };
-    case 'MAINTENANCE':
-    default:
-      return { text: status, className: 'bg-zinc-800 text-zinc-300 border border-zinc-700' };
-  }
-}
 
 const CANCELLED_HOLDS_KEY = 'hip_cancelled_ems_holds';
 const ASSIGNED_BEDS_KEY = 'hip_assigned_ems_patient_ids';
@@ -1983,7 +1966,7 @@ export default function Clinical(): React.ReactElement {
                 style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}
               >
                 {displayedBeds.map((bed) => {
-                  const badge = getStatusBadge(bed.status);
+                  const badge = getBedStatusStyle(bed.status);
                   const isOccupied = bed.status === 'OCCUPIED';
                   const isAvailable = bed.status === 'AVAILABLE';
 
@@ -1997,8 +1980,8 @@ export default function Clinical(): React.ReactElement {
                           <span className="text-xs font-mono text-zinc-500 uppercase tracking-wider">
                             Rm {bed.room_number}
                           </span>
-                          <span className={`text-[10px] font-mono uppercase px-1.5 py-0.5 ${badge.className}`}>
-                            {badge.text}
+                          <span className={`text-[10px] font-mono uppercase px-1.5 py-0.5 ${badge.badge}`}>
+                            {badge.label}
                           </span>
                         </div>
                         <h2 className="text-xl font-bold font-mono text-white">{bed.bed_code}</h2>

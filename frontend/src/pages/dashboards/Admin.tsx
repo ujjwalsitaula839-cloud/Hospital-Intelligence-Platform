@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
+import { BED_STATUS_STYLES } from '../../lib/bedStatus';
 import type { Bed, BedStatus, Department, Role } from '../../types';
 import Clinical from './Clinical';
 import Housekeeping from './Housekeeping';
@@ -867,8 +868,8 @@ export default function Admin(): React.ReactElement {
                         <td className="p-3">
                           {b.status === 'OCCUPIED' ? (
                             <div className="flex items-center gap-2">
-                              <span className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono font-bold bg-amber-950/60 border border-amber-800 text-amber-300">
-                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                              <span className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono font-bold ${BED_STATUS_STYLES.OCCUPIED.badge}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full animate-pulse ${BED_STATUS_STYLES.OCCUPIED.dot}`} />
                                 OCCUPIED {b.patient_name ? `• ${b.patient_name}` : ''}
                               </span>
                               <button
@@ -882,8 +883,8 @@ export default function Admin(): React.ReactElement {
                             </div>
                           ) : b.status === 'RESERVED' ? (
                             <div className="flex items-center gap-2">
-                              <span className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono font-bold bg-blue-950/60 border border-blue-800 text-blue-300">
-                                <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+                              <span className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono font-bold ${BED_STATUS_STYLES.RESERVED.badge}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${BED_STATUS_STYLES.RESERVED.dot}`} />
                                 RESERVED {b.patient_name ? `• ${b.patient_name}` : ''}
                               </span>
                               <button

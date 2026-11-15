@@ -88,7 +88,7 @@ export default function ResetPassword(): React.ReactElement {
   // Missing token view
   if (!token) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
+      <div className="auth-page min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
       <div className="fixed top-4 right-4 z-50">
         <ThemeToggle />
       </div>
@@ -122,7 +122,7 @@ export default function ResetPassword(): React.ReactElement {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
+    <div className="auth-page min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
       <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 p-8 shadow-2xl">
         {/* Header Badge & Title */}
         <div className="mb-6">
@@ -170,7 +170,7 @@ export default function ResetPassword(): React.ReactElement {
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300">
+                <label htmlFor="reset-new-password" className="block text-xs font-mono uppercase tracking-wider text-zinc-300">
                   New Password
                 </label>
                 <button
@@ -182,7 +182,9 @@ export default function ResetPassword(): React.ReactElement {
                 </button>
               </div>
               <input
+                id="reset-new-password"
                 type={showPassword ? 'text' : 'password'}
+                autoComplete="new-password"
                 required
                 minLength={8}
                 value={newPassword}
@@ -193,11 +195,13 @@ export default function ResetPassword(): React.ReactElement {
             </div>
 
             <div>
-              <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1.5">
+              <label htmlFor="reset-confirm-password" className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1.5">
                 Confirm New Password
               </label>
               <input
+                id="reset-confirm-password"
                 type={showPassword ? 'text' : 'password'}
+                autoComplete="new-password"
                 required
                 minLength={8}
                 value={confirmPassword}
