@@ -157,6 +157,25 @@ class TestBedServiceBolaAuthz(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.status_code, 403)
 
+    def test_create_bed_route_blocks_nurse_with_403(self):
+        client = TestClient(main.app)
+        resp = client.post(
+            "/create",
+            headers={
+                "X-Gateway-Secret": os.environ["INTERNAL_SERVICE_SECRET"],
+                "X-User-Id": "5",
+                "X-User-Role": "NURSE",
+                "X-User-Username": "nurse_sarah",
+            },
+            json={
+                "bed_code": "NEW-99",
+                "department": "EMERGENCY",
+                "room_number": "99",
+                "bed_type": "STANDARD",
+            },
+        )
+        self.assertEqual(resp.status_code, 403)
+
 
 if __name__ == "__main__":
     unittest.main()

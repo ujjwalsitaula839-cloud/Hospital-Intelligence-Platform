@@ -93,7 +93,7 @@ async def run_bola_suite() -> None:
             DELETE FROM personnel
             WHERE username IN (
                 'bola_cleaner_1', 'bola_cleaner_2',
-                'bola_nurse_1', 'bola_nurse_2',
+                'bola_nurse_1', 'bola_nurse_2', 'bola_nurse_3',
                 'bola_doctor', 'bola_admin'
             );
             """
@@ -106,6 +106,7 @@ async def run_bola_suite() -> None:
                 ('bola_cleaner_2', 'bola_cleaner_2@hospital.org', $1, 'BOLA Cleaner Two', 'CLEANING_CREW', 'ENVIRONMENTAL_SERVICES', true, false),
                 ('bola_nurse_1',   'bola_nurse_1@hospital.org',   $1, 'BOLA Nurse One',   'NURSE',         'EMERGENCY', true, false),
                 ('bola_nurse_2',   'bola_nurse_2@hospital.org',   $1, 'BOLA Nurse Two',   'NURSE',         'EMERGENCY', true, false),
+                ('bola_nurse_3',   'bola_nurse_3@hospital.org',   $1, 'BOLA Nurse Three', 'NURSE',         'EMERGENCY', true, false),
                 ('bola_doctor',    'bola_doctor@hospital.org',    $1, 'BOLA Doctor',      'DOCTOR',        'EMERGENCY', true, false),
                 ('bola_admin',     'bola_admin@hospital.org',     $1, 'BOLA Admin',       'ADMIN',         'ADMINISTRATION', true, false);
             """,
@@ -340,6 +341,13 @@ async def run_bola_suite() -> None:
             r_doc_complete.text,
         )
 
+        # Re-assign Nurse 1 to test authorized clinical reads under active care scope
+        await client.post(
+            f"/patients/admissions/{admission_id}/assign-nurse",
+            json={"nurse_id": nurse1["personnel_id"]},
+            headers=doctor["headers"],
+        )
+
         # HIPAA READ audit triggers + pagination bounds
         r_chart = await client.get(f"/patients/patient/{patient_id}", headers=nurse1["headers"])
         test_result("Nurse 1 GET /patients/patient/{id} -> HTTP 200", r_chart.status_code == 200, r_chart.text)
@@ -365,7 +373,94 @@ async def run_bola_suite() -> None:
             f"Got {r_unbounded.status_code}: {r_unbounded.text}",
         )
 
-        await client.post(f"/patients/admissions/{admission_id}/discharge", headers=doctor["headers"])
+        # -----------------------------------------------------------------
+        # 4. VITALS CHARTING BOLA & DISCHARGED STATE GUARDS
+        # -----------------------------------------------------------------
+        print("\n--- 4. Vitals Charting BOLA & Discharged Encounter Guards ---")
+        await client.post(
+            f"/patients/admissions/{admission_id}/assign-nurse",
+            json={"nurse_id": nurse1["personnel_id"]},
+            headers=doctor["headers"],
+        )
+
+        # Unassigned Nurse 2 tries to chart vitals -> 403 Forbidden
+        r_unassigned_vitals = await client.post(
+            f"/patients/admissions/{admission_id}/observations",
+            json={"heart_rate_bpm": 80, "systolic_bp": 120, "diastolic_bp": 80},
+            headers=nurse2["headers"],
+        )
+        test_result(
+            "Unassigned Nurse 2 blocked from charting vitals -> HTTP 403",
+            r_unassigned_vitals.status_code == 403,
+            f"Got {r_unassigned_vitals.status_code}: {r_unassigned_vitals.text}",
+        )
+
+        # Assigned Nurse 1 charts vitals -> 201 Created
+        r_assigned_vitals = await client.post(
+            f"/patients/admissions/{admission_id}/observations",
+            json={"heart_rate_bpm": 76, "systolic_bp": 118, "diastolic_bp": 78},
+            headers=nurse1["headers"],
+        )
+        test_result(
+            "Assigned Nurse 1 charts vitals -> HTTP 201",
+            r_assigned_vitals.status_code == 201,
+            r_assigned_vitals.text,
+        )
+
+        # Nurse 1 reads handoff latest (HIPAA audit trigger)
+        r_handoff_read = await client.get(
+            f"/patients/admissions/{admission_id}/handoff/latest",
+            headers=nurse1["headers"],
+        )
+        test_result(
+            "Nurse 1 reads latest handoff report -> HTTP 200",
+            r_handoff_read.status_code == 200,
+            r_handoff_read.text,
+        )
+
+        # Discharge admission
+        r_disch = await client.put(f"/patients/admissions/{admission_id}/discharge", headers=doctor["headers"])
+        assert r_disch.status_code == 200, f"Discharge failed: {r_disch.text}"
+
+        # Nurse 1 tries to chart vitals on discharged admission -> 400 Bad Request
+        r_disch_vitals = await client.post(
+            f"/patients/admissions/{admission_id}/observations",
+            json={"heart_rate_bpm": 80},
+            headers=nurse1["headers"],
+        )
+        test_result(
+            "Nurse 1 blocked from charting on discharged admission -> HTTP 400",
+            r_disch_vitals.status_code == 400,
+            f"Got {r_disch_vitals.status_code}: {r_disch_vitals.text}",
+        )
+
+        # -----------------------------------------------------------------
+        # 5. PHYSICAL BED CREATION BFLA ROLE ENFORCEMENT (ADMIN ONLY)
+        # -----------------------------------------------------------------
+        print("\n--- 5. Physical Bed Creation Function Authorization (BFLA) ---")
+        import time
+        unique_bed = f"SEC-{int(time.time() * 1000) % 100000}"
+        r_nurse_bed_create = await client.post(
+            "/beds/create",
+            json={"bed_code": unique_bed, "department": "EMERGENCY", "room_number": "99", "bed_type": "STANDARD"},
+            headers=nurse1["headers"],
+        )
+        test_result(
+            "NURSE blocked from creating physical bed asset -> HTTP 403",
+            r_nurse_bed_create.status_code == 403,
+            f"Got {r_nurse_bed_create.status_code}: {r_nurse_bed_create.text}",
+        )
+
+        r_admin_bed_create = await client.post(
+            "/beds/create",
+            json={"bed_code": unique_bed, "department": "EMERGENCY", "room_number": "99", "bed_type": "STANDARD"},
+            headers=admin["headers"],
+        )
+        test_result(
+            "ADMIN creates physical bed asset -> HTTP 200/201",
+            r_admin_bed_create.status_code in (200, 201),
+            r_admin_bed_create.text,
+        )
 
     # Verify audit entries in Postgres
     conn = await asyncpg.connect(PG_DSN)
@@ -386,10 +481,20 @@ async def run_bola_suite() -> None:
             "SELECT COUNT(*) FROM patient_audit_log WHERE user_id = $1 AND action = 'READ_OBSERVATIONS';",
             nurse1["personnel_id"],
         )
+        read_handoff_rows = await conn.fetchval(
+            "SELECT COUNT(*) FROM patient_audit_log WHERE user_id = $1 AND action = 'READ_NURSE_HANDOFF';",
+            nurse1["personnel_id"],
+        )
+        bed_create_rows = await conn.fetchval(
+            "SELECT COUNT(*) FROM bed_audit_log WHERE user_id = $1 AND action = 'BED_CREATED';",
+            admin["personnel_id"],
+        )
         test_result("PostgreSQL bed_audit_log recorded Cleaner 2 BOLA_DENIED", (bed_bola_rows or 0) >= 1, f"count={bed_bola_rows}")
         test_result("PostgreSQL patient_audit_log recorded Nurse 2 BOLA_DENIED", (patient_bola_rows or 0) >= 1, f"count={patient_bola_rows}")
         test_result("PostgreSQL patient_audit_log recorded READ_PATIENT_CHART", (read_chart_rows or 0) >= 1, f"count={read_chart_rows}")
         test_result("PostgreSQL patient_audit_log recorded READ_OBSERVATIONS", (read_obs_rows or 0) >= 1, f"count={read_obs_rows}")
+        test_result("PostgreSQL patient_audit_log recorded READ_NURSE_HANDOFF", (read_handoff_rows or 0) >= 1, f"count={read_handoff_rows}")
+        test_result("PostgreSQL bed_audit_log recorded BED_CREATED", (bed_create_rows or 0) >= 1, f"count={bed_create_rows}")
     finally:
         await conn.close()
 

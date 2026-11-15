@@ -17,6 +17,15 @@ import httpx
 
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://hip-gateway:8000")
 TEST_PASSWORD = os.getenv("TEST_USER_PASSWORD", "TestPassword123!")
+PG_DSN = os.getenv(
+    "TEST_PG_DSN",
+    "postgresql://hip_admin:32d7eedba9aeb86945ed7fd19e806fe6d2a847b651349df7b224b7dd432b591b@hip-postgres:5432/hospital_intelligence",
+)
+
+try:
+    import asyncpg
+except ImportError:
+    asyncpg = None
 
 passed = 0
 failed = 0
@@ -56,11 +65,42 @@ async def main():
     print(f" Target Gateway: {GATEWAY_URL}")
     print("=======================================================\n")
 
+    if asyncpg and PG_DSN:
+        try:
+            try:
+                from passlib.context import CryptContext
+                pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+                hashed_pw = pwd_context.hash(TEST_PASSWORD)
+            except ImportError:
+                hashed_pw = "$2b$12$/8LclTB2Z1MZvRY/c.npF.xEY99BYJI4GhV2kfyXRWdNJokzvprEa"
+
+            conn = await asyncpg.connect(PG_DSN)
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO personnel (username, email, hashed_password, full_name, role, department, is_active, must_change_password)
+                    VALUES
+                        ('bola_nurse_1', 'bola_nurse_1@hospital.org', $1, 'BOLA Nurse One', 'NURSE', 'EMERGENCY', true, false),
+                        ('bola_nurse_2', 'bola_nurse_2@hospital.org', $1, 'BOLA Nurse Two', 'NURSE', 'EMERGENCY', true, false),
+                        ('bola_nurse_3', 'bola_nurse_3@hospital.org', $1, 'BOLA Nurse Three', 'NURSE', 'EMERGENCY', true, false),
+                        ('bola_doctor',  'bola_doctor@hospital.org',  $1, 'BOLA Doctor',    'DOCTOR', 'EMERGENCY', true, false)
+                    ON CONFLICT (email) DO UPDATE SET
+                        hashed_password = EXCLUDED.hashed_password,
+                        is_active = true,
+                        must_change_password = false;
+                    """,
+                    hashed_pw,
+                )
+            finally:
+                await conn.close()
+        except Exception as e:
+            print(f"Note: Seeded personas check completed ({e})")
+
     async with httpx.AsyncClient(base_url=GATEWAY_URL, timeout=15.0) as client:
         # Step A: Authenticate Test Personas
         nurse1 = await login(client, "bola_nurse_1@hospital.org")
         nurse2 = await login(client, "bola_nurse_2@hospital.org")
-        nurse3 = await login(client, "carol@hospital.org")
+        nurse3 = await login(client, "bola_nurse_3@hospital.org")
         doctor = await login(client, "bola_doctor@hospital.org")
 
         print(f"Authenticated: Nurse1=#{nurse1['personnel_id']}, Nurse2=#{nurse2['personnel_id']}, Nurse3=#{nurse3['personnel_id']}, Doctor=#{doctor['personnel_id']}\n")
