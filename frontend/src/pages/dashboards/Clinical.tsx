@@ -1883,7 +1883,7 @@ export default function Clinical(): React.ReactElement {
                     key={dept}
                     type="button"
                     onClick={() => setBedDeptFilter(dept)}
-                    className={`px-2.5 py-1 text-[11px] font-mono uppercase tracking-wider border transition-colors ${
+                    className={`px-3 py-1.5 sm:px-2.5 sm:py-1 text-xs sm:text-[11px] font-mono uppercase tracking-wider border transition-colors min-h-[36px] sm:min-h-0 flex items-center ${
                       bedDeptFilter === dept
                         ? 'bg-white text-zinc-950 font-bold border-white'
                         : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200'
@@ -1896,7 +1896,7 @@ export default function Clinical(): React.ReactElement {
                   <button
                     type="button"
                     onClick={() => setOnlyMyPatients(!onlyMyPatients)}
-                    className={`ml-2 px-2.5 py-1 text-[11px] font-mono uppercase tracking-wider border transition-colors ${
+                    className={`ml-0 sm:ml-2 px-3 py-1.5 sm:px-2.5 sm:py-1 text-xs sm:text-[11px] font-mono uppercase tracking-wider border transition-colors min-h-[36px] sm:min-h-0 flex items-center ${
                       onlyMyPatients
                         ? 'bg-blue-600 text-white font-bold border-blue-500 shadow-xs'
                         : 'bg-zinc-900 text-blue-400 border-zinc-800 hover:border-zinc-700 hover:text-blue-300'
@@ -1916,7 +1916,7 @@ export default function Clinical(): React.ReactElement {
                       if (anyOcc) setShiftHandoffBed(anyOcc);
                     }
                   }}
-                  className="ml-1.5 px-2.5 py-1 text-[11px] font-mono uppercase tracking-wider border border-zinc-800 bg-zinc-900 text-emerald-400 hover:border-emerald-600 hover:text-emerald-300 transition-colors flex items-center gap-1.5"
+                  className="ml-0 sm:ml-1.5 px-3 py-1.5 sm:px-2.5 sm:py-1 text-xs sm:text-[11px] font-mono uppercase tracking-wider border border-zinc-800 bg-zinc-900 text-emerald-400 hover:border-emerald-600 hover:text-emerald-300 transition-colors flex items-center gap-1.5 min-h-[36px] sm:min-h-0"
                   title="Open Structured Shift Handoff Report (I-PASS)"
                 >
                   <span>📋 Shift Handoff</span>
@@ -2034,7 +2034,7 @@ export default function Clinical(): React.ReactElement {
                                 fetchPatients();
                               }
                             }}
-                            className="w-full bg-white text-zinc-950 hover:bg-zinc-200 py-1.5 text-xs font-mono font-bold uppercase tracking-wider transition-colors"
+                            className="w-full bg-white text-zinc-950 hover:bg-zinc-200 py-2 sm:py-1.5 text-xs font-mono font-bold uppercase tracking-wider transition-colors min-h-[40px] sm:min-h-0 flex items-center justify-center"
                           >
                             + Admit Patient
                           </button>
@@ -2105,7 +2105,7 @@ export default function Clinical(): React.ReactElement {
                                     onClick={() => {
                                       setShiftHandoffBed(bed);
                                     }}
-                                    className="text-[9px] px-1.5 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors shrink-0"
+                                    className="text-[10px] sm:text-[9px] px-2 py-1 sm:px-1.5 sm:py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors shrink-0 min-h-[32px] sm:min-h-0 flex items-center"
                                     title="Clinical Shift Handover (I-PASS)"
                                   >
                                     Handover
@@ -2122,7 +2122,7 @@ export default function Clinical(): React.ReactElement {
                                   setChartingBedCode(bed.bed_code);
                                   setVitalsSubmitError(null);
                                 }}
-                                className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 dark:border-zinc-700 py-1.5 px-2 text-[11px] font-mono font-semibold tracking-wider text-center rounded transition-colors shadow-xs"
+                                className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 dark:border-zinc-700 py-2 sm:py-1.5 px-2 text-xs sm:text-[11px] font-mono font-semibold tracking-wider text-center rounded transition-colors shadow-xs min-h-[38px] sm:min-h-0 flex items-center justify-center"
                               >
                                 Chart Vitals
                               </button>
@@ -2134,7 +2134,7 @@ export default function Clinical(): React.ReactElement {
                                   setTransferToBedCode('');
                                   setTransferError(null);
                                 }}
-                                className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 dark:border-zinc-700 py-1.5 px-2 text-[11px] font-mono font-semibold tracking-wider text-center rounded transition-colors shadow-xs"
+                                className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-200 dark:border-zinc-700 py-2 sm:py-1.5 px-2 text-xs sm:text-[11px] font-mono font-semibold tracking-wider text-center rounded transition-colors shadow-xs min-h-[38px] sm:min-h-0 flex items-center justify-center"
                               >
                                 Transfer
                               </button>
@@ -2146,7 +2146,7 @@ export default function Clinical(): React.ReactElement {
                                 setDischargeBed(bed);
                                 setDischargeError(null);
                               }}
-                              className="w-full border border-red-300 bg-red-50 hover:bg-red-100 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:hover:bg-red-900/60 dark:text-red-300 py-1.5 text-[11px] font-mono font-semibold tracking-wider transition-colors rounded shadow-xs"
+                              className="w-full border border-red-300 bg-red-50 hover:bg-red-100 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:hover:bg-red-900/60 dark:text-red-300 py-2 sm:py-1.5 text-xs sm:text-[11px] font-mono font-semibold tracking-wider transition-colors rounded shadow-xs min-h-[38px] sm:min-h-0 flex items-center justify-center"
                             >
                               Discharge
                             </button>
@@ -2191,7 +2191,7 @@ export default function Clinical(): React.ReactElement {
                                     onClick={() => {
                                       setShiftHandoffBed(bed);
                                     }}
-                                    className="text-[9px] px-1.5 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors shrink-0"
+                                    className="text-[10px] sm:text-[9px] px-2 py-1 sm:px-1.5 sm:py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors shrink-0 min-h-[32px] sm:min-h-0 flex items-center"
                                     title="Clinical Shift Handover (I-PASS)"
                                   >
                                     Handover
@@ -2203,7 +2203,7 @@ export default function Clinical(): React.ReactElement {
                             <button
                               type="button"
                               onClick={() => handleConfirmArrival(bed.bed_code)}
-                              className="w-full bg-yellow-500 hover:bg-yellow-400 text-zinc-950 font-bold py-1.5 text-xs font-mono uppercase tracking-wider transition-colors shadow-sm"
+                              className="w-full bg-yellow-500 hover:bg-yellow-400 text-zinc-950 font-bold py-2 sm:py-1.5 text-xs font-mono uppercase tracking-wider transition-colors shadow-sm min-h-[40px] sm:min-h-0 flex items-center justify-center"
                             >
                               ✓ Bed Patient (Occupy)
                             </button>
@@ -3665,9 +3665,9 @@ export default function Clinical(): React.ReactElement {
       {/* MODAL: BED TRANSFER */}
       {/* ================================================================= */}
       {transferFromBed && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
           <div className="fixed inset-0 bg-black/75 backdrop-blur-xs" onClick={() => setTransferFromBed(null)} />
-          <div className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800 p-6 shadow-2xl">
+          <div className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Intra-Hospital Transfer</span>
@@ -3740,9 +3740,9 @@ export default function Clinical(): React.ReactElement {
       {/* MODAL: DISCHARGE CONFIRMATION */}
       {/* ================================================================= */}
       {dischargeBed && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
           <div className="fixed inset-0 bg-black/75 backdrop-blur-xs" onClick={() => setDischargeBed(null)} />
-          <div className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800 p-6 shadow-2xl">
+          <div className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-red-400">Discharge Verification</span>
@@ -3800,9 +3800,9 @@ export default function Clinical(): React.ReactElement {
       {/* MODAL: REGISTER PATIENT */}
       {/* ================================================================= */}
       {isRegisterOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
           <div className="fixed inset-0 bg-black/75 backdrop-blur-xs" onClick={() => setIsRegisterOpen(false)} />
-          <div className="relative z-10 w-full max-w-lg bg-zinc-900 border border-zinc-800 p-6 shadow-2xl">
+          <div className="relative z-10 w-full sm:max-w-lg bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Master Patient Index</span>
@@ -3916,9 +3916,9 @@ export default function Clinical(): React.ReactElement {
       {/* MODAL: EDIT PATIENT DETAILS */}
       {/* ================================================================= */}
       {editingPatient && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
           <div className="fixed inset-0 bg-black/75 backdrop-blur-xs" onClick={() => setEditingPatient(null)} />
-          <div className="relative z-10 w-full max-w-lg bg-zinc-900 border border-zinc-800 p-6 shadow-2xl">
+          <div className="relative z-10 w-full sm:max-w-lg bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Master Patient Index • Edit Record</span>
@@ -4339,12 +4339,12 @@ export default function Clinical(): React.ReactElement {
       {/* MODAL: DIRECT QUICK VITALS CHARTING */}
       {/* ================================================================= */}
       {chartingAdmissionId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto font-mono text-xs">
           <div
             className="fixed inset-0 bg-black/75 backdrop-blur-xs"
             onClick={() => setChartingAdmissionId(null)}
           />
-          <div className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800 p-6 shadow-2xl">
+          <div className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Bed {chartingBedCode}</span>
@@ -4508,12 +4508,12 @@ export default function Clinical(): React.ReactElement {
       {/* MODAL: ALLOCATE EQUIPMENT TO ANY BED */}
       {/* ================================================================= */}
       {allocatingEquipment && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
           <div
             className="fixed inset-0 bg-black/75 backdrop-blur-xs"
             onClick={() => setAllocatingEquipment(null)}
           />
-          <div className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800 p-6 shadow-2xl">
+          <div className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Device Checkout</span>
