@@ -27,6 +27,7 @@ import ThemeToggle from '../../components/navigation/ThemeToggle';
 import NotificationBell, { type AppNotification } from '../../components/navigation/NotificationBell';
 import ElonChatWidget from '../../components/elon/ElonChatWidget';
 import { useDialog } from '../../hooks/useDialog';
+import { useAnnounce } from '../../components/a11y/Announcer';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -529,6 +530,17 @@ export default function Clinical(): React.ReactElement {
   }, []);
 
   // Accessible dialog behaviour (focus in, focus trap, Escape, focus return) for the inline modals
+  // Outcome of the last clinical action, shown inline and announced to screen readers.
+  const announce = useAnnounce();
+  const [actionStatus, setActionStatus] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+  const reportStatus = useCallback(
+    (kind: 'success' | 'error', message: string) => {
+      setActionStatus({ kind, message });
+      announce(message, kind === 'error' ? 'assertive' : 'polite');
+    },
+    [announce]
+  );
+
   const emsHoldDialogRef = useDialog<HTMLDivElement>(!!assigningEmsItem, () => setAssigningEmsItem(null));
   const admitDialogRef = useDialog<HTMLDivElement>(!!admitBed, () => setAdmitBed(null));
   const transferDialogRef = useDialog<HTMLDivElement>(!!transferFromBed, () => setTransferFromBed(null));
@@ -1089,6 +1101,19 @@ export default function Clinical(): React.ReactElement {
       return;
     }
 
+    const measured = [
+      vitalsForm.heart_rate_bpm,
+      vitalsForm.systolic_bp,
+      vitalsForm.diastolic_bp,
+      vitalsForm.oxygen_saturation_pct,
+      vitalsForm.temperature_celsius,
+      vitalsForm.respiratory_rate,
+    ].some((value) => value !== null && value !== undefined && String(value) !== '');
+    if (!measured) {
+      setVitalsSubmitError('Enter at least one measured vital sign before saving.');
+      return;
+    }
+
     setIsSubmittingVitals(true);
     setVitalsSubmitError(null);
 
@@ -1119,6 +1144,8 @@ export default function Clinical(): React.ReactElement {
       if (selectedVitalsAdmId) {
         await fetchObservations(selectedVitalsAdmId);
       }
+      const chartedBed = beds.find((b) => b.admission_id === admId)?.bed_code;
+      reportStatus('success', `Vitals saved${chartedBed ? ` for bed ${chartedBed}` : ''}.`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to record vitals.';
       setVitalsSubmitError(msg);
@@ -1149,10 +1176,12 @@ export default function Clinical(): React.ReactElement {
         admission_id: selectedBedObj?.admission_id || undefined,
         bed_code: targetBedForEquip,
       });
+      const allocatedName = allocatingEquipment.equipment_name;
       setAllocatingEquipment(null);
       setTargetBedForEquip('');
       await fetchEquipment();
       await fetchBeds();
+      reportStatus('success', `${allocatedName} allocated to bed ${targetBedForEquip}.`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to allocate equipment.';
       setAllocateError(msg);
@@ -1167,8 +1196,9 @@ export default function Clinical(): React.ReactElement {
       await api.releaseEquipment(allocationId);
       await fetchEquipment();
       await fetchBeds();
-    } catch {
-      // release error handling
+      reportStatus('success', 'Equipment released and marked available.');
+    } catch (err: unknown) {
+      reportStatus('error', err instanceof Error ? `Could not release equipment: ${err.message}` : 'Could not release equipment.');
     }
   };
 
@@ -1752,6 +1782,29 @@ export default function Clinical(): React.ReactElement {
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto p-6 flex-1 w-full">
+        {actionStatus && (
+          <div
+            data-testid="clinical-action-status"
+            className={`sticky top-2 z-40 mb-4 p-3 border font-mono text-xs flex items-center justify-between gap-3 ${
+              actionStatus.kind === 'success'
+                ? 'border-green-700 bg-green-950 text-green-300'
+                : 'border-red-700 bg-red-950 text-red-300'
+            }`}
+          >
+            <span>
+              {actionStatus.kind === 'success' ? '✓ ' : '⚠ '}
+              {actionStatus.message}
+            </span>
+            <button
+              type="button"
+              aria-label="Dismiss message"
+              onClick={() => setActionStatus(null)}
+              className="px-1 text-current hover:opacity-80"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         {/* ================================================================= */}
         {/* MODULE 1: BED GRID & TELEMETRY */}
         {/* ================================================================= */}
@@ -2430,7 +2483,7 @@ export default function Clinical(): React.ReactElement {
                             heart_rate_bpm: e.target.value ? Number(e.target.value) : null,
                           }))
                         }
-                        placeholder="e.g. 72"
+                        placeholder="Not measured"
                         className="w-full bg-zinc-950 border border-zinc-800 px-3 py-2 text-white focus:outline-none focus:border-zinc-500"
                       />
                     </div>
@@ -2449,7 +2502,7 @@ export default function Clinical(): React.ReactElement {
                               systolic_bp: e.target.value ? Number(e.target.value) : null,
                             }))
                           }
-                          placeholder="120"
+                          placeholder="Not measured"
                           className="w-full bg-zinc-950 border border-zinc-800 px-3 py-2 text-white focus:outline-none focus:border-zinc-500"
                         />
                       </div>
@@ -2466,7 +2519,7 @@ export default function Clinical(): React.ReactElement {
                               diastolic_bp: e.target.value ? Number(e.target.value) : null,
                             }))
                           }
-                          placeholder="80"
+                          placeholder="Not measured"
                           className="w-full bg-zinc-950 border border-zinc-800 px-3 py-2 text-white focus:outline-none focus:border-zinc-500"
                         />
                       </div>
@@ -2486,7 +2539,7 @@ export default function Clinical(): React.ReactElement {
                             oxygen_saturation_pct: e.target.value ? Number(e.target.value) : null,
                           }))
                         }
-                        placeholder="e.g. 98.5"
+                        placeholder="Not measured"
                         className="w-full bg-zinc-950 border border-zinc-800 px-3 py-2 text-white focus:outline-none focus:border-zinc-500"
                       />
                     </div>
@@ -2505,7 +2558,7 @@ export default function Clinical(): React.ReactElement {
                             temperature_celsius: e.target.value ? Number(e.target.value) : null,
                           }))
                         }
-                        placeholder="e.g. 37.0"
+                        placeholder="Not measured"
                         className="w-full bg-zinc-950 border border-zinc-800 px-3 py-2 text-white focus:outline-none focus:border-zinc-500"
                       />
                     </div>
@@ -2523,7 +2576,7 @@ export default function Clinical(): React.ReactElement {
                             respiratory_rate: e.target.value ? Number(e.target.value) : null,
                           }))
                         }
-                        placeholder="e.g. 16"
+                        placeholder="Not measured"
                         className="w-full bg-zinc-950 border border-zinc-800 px-3 py-2 text-white focus:outline-none focus:border-zinc-500"
                       />
                     </div>
@@ -4381,7 +4434,7 @@ export default function Clinical(): React.ReactElement {
                         heart_rate_bpm: e.target.value ? Number(e.target.value) : null,
                       }))
                     }
-                    placeholder="72"
+                    placeholder="Not measured"
                     className="w-full bg-zinc-950 border border-zinc-800 p-2 text-white focus:outline-none focus:border-zinc-500"
                   />
                 </div>
@@ -4399,7 +4452,7 @@ export default function Clinical(): React.ReactElement {
                         oxygen_saturation_pct: e.target.value ? Number(e.target.value) : null,
                       }))
                     }
-                    placeholder="98.0"
+                    placeholder="Not measured"
                     className="w-full bg-zinc-950 border border-zinc-800 p-2 text-white focus:outline-none focus:border-zinc-500"
                   />
                 </div>
@@ -4419,7 +4472,7 @@ export default function Clinical(): React.ReactElement {
                         systolic_bp: e.target.value ? Number(e.target.value) : null,
                       }))
                     }
-                    placeholder="120"
+                    placeholder="Not measured"
                     className="w-full bg-zinc-950 border border-zinc-800 p-2 text-white focus:outline-none focus:border-zinc-500"
                   />
                 </div>
@@ -4436,7 +4489,7 @@ export default function Clinical(): React.ReactElement {
                         diastolic_bp: e.target.value ? Number(e.target.value) : null,
                       }))
                     }
-                    placeholder="80"
+                    placeholder="Not measured"
                     className="w-full bg-zinc-950 border border-zinc-800 p-2 text-white focus:outline-none focus:border-zinc-500"
                   />
                 </div>
@@ -4457,7 +4510,7 @@ export default function Clinical(): React.ReactElement {
                         temperature_celsius: e.target.value ? Number(e.target.value) : null,
                       }))
                     }
-                    placeholder="37.0"
+                    placeholder="Not measured"
                     className="w-full bg-zinc-950 border border-zinc-800 p-2 text-white focus:outline-none focus:border-zinc-500"
                   />
                 </div>
@@ -4474,7 +4527,7 @@ export default function Clinical(): React.ReactElement {
                         respiratory_rate: e.target.value ? Number(e.target.value) : null,
                       }))
                     }
-                    placeholder="16"
+                    placeholder="Not measured"
                     className="w-full bg-zinc-950 border border-zinc-800 p-2 text-white focus:outline-none focus:border-zinc-500"
                   />
                 </div>
@@ -4624,6 +4677,7 @@ export default function Clinical(): React.ReactElement {
         onClose={() => setShiftHandoffBed(null)}
         onSuccess={async () => {
           await fetchBeds({ silent: true });
+          reportStatus('success', 'Shift handoff recorded and patients reassigned to the oncoming nurse.');
         }}
       />
 
