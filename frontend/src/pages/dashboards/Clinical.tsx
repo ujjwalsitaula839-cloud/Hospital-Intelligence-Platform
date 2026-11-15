@@ -358,7 +358,7 @@ export default function Clinical(): React.ReactElement {
   useEffect(() => {
     fetchBeds();
     fetchPatients();
-    api.getNurses?.()?.then((data) => setNursesList(data || [])).catch(() => {});
+    api.getNurses?.()?.then((data) => setNursesList(data || [])).catch(() => { });
   }, []);
 
   useEffect(() => {
@@ -1298,14 +1298,14 @@ export default function Clinical(): React.ReactElement {
         prevBeds.map((b) =>
           b.bed_code === chosenBedCode
             ? {
-                ...b,
-                status: shouldOccupy ? 'OCCUPIED' : 'RESERVED',
-                admission_id: admissionId,
-                patient_id: assignedPId,
-                patient_name: assignedPatientName,
-                primary_diagnosis: assigningEmsItem.admission?.primary_diagnosis || 'Inbound EMS Arrival',
-                acuity_level: assigningEmsItem.admission?.acuity_level || 'ESI_3',
-              }
+              ...b,
+              status: shouldOccupy ? 'OCCUPIED' : 'RESERVED',
+              admission_id: admissionId,
+              patient_id: assignedPId,
+              patient_name: assignedPatientName,
+              primary_diagnosis: assigningEmsItem.admission?.primary_diagnosis || 'Inbound EMS Arrival',
+              acuity_level: assigningEmsItem.admission?.acuity_level || 'ESI_3',
+            }
             : b
         )
       );
@@ -1328,13 +1328,11 @@ export default function Clinical(): React.ReactElement {
         id: `${Date.now()}`,
         eventType: shouldOccupy ? 'PATIENT_ADMITTED' : 'BED_RESERVED',
         title: shouldOccupy ? 'Patient Admitted to Bed' : 'Bed Reserved (Hold)',
-        message: `${assignedPatientName} was ${
-          shouldOccupy ? 'admitted to' : 'held in'
-        } bed ${chosenBedCode}${
-          emsSelectedEquipmentIds.length > 0
+        message: `${assignedPatientName} was ${shouldOccupy ? 'admitted to' : 'held in'
+          } bed ${chosenBedCode}${emsSelectedEquipmentIds.length > 0
             ? ` with ${emsSelectedEquipmentIds.length} equipment item(s) staged.`
             : '.'
-        }`,
+          }`,
         actor: claims?.full_name || claims?.username || 'Staff',
         bedCode: chosenBedCode,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -1708,11 +1706,10 @@ export default function Clinical(): React.ReactElement {
         <div className="max-w-7xl mx-auto flex space-x-8">
           <button
             onClick={() => setActiveTab('beds')}
-            className={`py-3 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 ${
-              activeTab === 'beds'
-                ? 'border-white text-white font-bold'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
+            className={`py-3 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 ${activeTab === 'beds'
+              ? 'border-white text-white font-bold'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              }`}
           >
             <span>🛏 Bed Grid & Telemetry</span>
             <span className="text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded-xs text-zinc-400">
@@ -1722,11 +1719,10 @@ export default function Clinical(): React.ReactElement {
 
           <button
             onClick={() => setActiveTab('patients')}
-            className={`py-3 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 ${
-              activeTab === 'patients'
-                ? 'border-white text-white font-bold'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
+            className={`py-3 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 ${activeTab === 'patients'
+              ? 'border-white text-white font-bold'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              }`}
           >
             <span>👥 Patient Directory</span>
             <span className="text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded-xs text-zinc-400">
@@ -1736,11 +1732,10 @@ export default function Clinical(): React.ReactElement {
 
           <button
             onClick={() => setActiveTab('vitals')}
-            className={`py-3 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 ${
-              activeTab === 'vitals'
-                ? 'border-white text-white font-bold'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
+            className={`py-3 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 ${activeTab === 'vitals'
+              ? 'border-white text-white font-bold'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              }`}
           >
             <span>🩺 Vitals & Observations</span>
             <span className="text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded-xs text-zinc-400">
@@ -1750,11 +1745,10 @@ export default function Clinical(): React.ReactElement {
 
           <button
             onClick={() => setActiveTab('equipment')}
-            className={`py-3 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 ${
-              activeTab === 'equipment'
-                ? 'border-white text-white font-bold'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
+            className={`py-3 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 ${activeTab === 'equipment'
+              ? 'border-white text-white font-bold'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              }`}
           >
             <span>⚡ Equipment Hub</span>
             <span className="text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded-xs text-zinc-400">
@@ -1764,11 +1758,10 @@ export default function Clinical(): React.ReactElement {
 
           <button
             onClick={() => setActiveTab('ems')}
-            className={`py-3 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 ${
-              activeTab === 'ems'
-                ? 'border-white text-white font-bold'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
+            className={`py-3 text-xs font-mono uppercase tracking-wider border-b-2 transition-colors flex items-center space-x-2 ${activeTab === 'ems'
+              ? 'border-white text-white font-bold'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              }`}
           >
             <span>🚑 EMS Inbound Intake</span>
             {emsPatientsList.length > 0 && (
@@ -1838,11 +1831,10 @@ export default function Clinical(): React.ReactElement {
               </div>
               <div
                 onClick={() => setBedStatusFilter(bedStatusFilter === 'AVAILABLE' ? 'ALL' : 'AVAILABLE')}
-                className={`border p-3 flex flex-col justify-between cursor-pointer transition-colors ${
-                  bedStatusFilter === 'AVAILABLE'
-                    ? 'bg-green-950/60 border-green-700'
-                    : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
-                }`}
+                className={`border p-3 flex flex-col justify-between cursor-pointer transition-colors ${bedStatusFilter === 'AVAILABLE'
+                  ? 'bg-green-950/60 border-green-700'
+                  : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
+                  }`}
               >
                 <div className="flex items-center justify-between">
                   <span className="text-green-400 uppercase text-[10px] tracking-wider font-semibold">Available</span>
@@ -1854,11 +1846,10 @@ export default function Clinical(): React.ReactElement {
               </div>
               <div
                 onClick={() => setBedStatusFilter(bedStatusFilter === 'OCCUPIED' ? 'ALL' : 'OCCUPIED')}
-                className={`border p-3 flex flex-col justify-between cursor-pointer transition-colors ${
-                  bedStatusFilter === 'OCCUPIED'
-                    ? 'bg-red-950/60 border-red-700'
-                    : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
-                }`}
+                className={`border p-3 flex flex-col justify-between cursor-pointer transition-colors ${bedStatusFilter === 'OCCUPIED'
+                  ? 'bg-red-950/60 border-red-700'
+                  : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
+                  }`}
               >
                 <div className="flex items-center justify-between">
                   <span className="text-red-400 uppercase text-[10px] tracking-wider font-semibold">Occupied</span>
@@ -1870,11 +1861,10 @@ export default function Clinical(): React.ReactElement {
               </div>
               <div
                 onClick={() => setBedStatusFilter(bedStatusFilter === 'RESERVED' ? 'ALL' : 'RESERVED')}
-                className={`border p-3 flex flex-col justify-between cursor-pointer transition-colors ${
-                  bedStatusFilter === 'RESERVED'
-                    ? 'bg-yellow-950/60 border-yellow-700'
-                    : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
-                }`}
+                className={`border p-3 flex flex-col justify-between cursor-pointer transition-colors ${bedStatusFilter === 'RESERVED'
+                  ? 'bg-yellow-950/60 border-yellow-700'
+                  : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
+                  }`}
               >
                 <div className="flex items-center justify-between">
                   <span className="text-yellow-400 uppercase text-[10px] tracking-wider font-semibold">Reserved (Hold)</span>
@@ -1886,11 +1876,10 @@ export default function Clinical(): React.ReactElement {
               </div>
               <div
                 onClick={() => setBedStatusFilter(bedStatusFilter === 'DIRTY' ? 'ALL' : 'DIRTY')}
-                className={`border p-3 flex flex-col justify-between cursor-pointer transition-colors ${
-                  bedStatusFilter === 'DIRTY'
-                    ? 'bg-orange-950/60 border-orange-700'
-                    : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
-                }`}
+                className={`border p-3 flex flex-col justify-between cursor-pointer transition-colors ${bedStatusFilter === 'DIRTY'
+                  ? 'bg-orange-950/60 border-orange-700'
+                  : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
+                  }`}
               >
                 <div className="flex items-center justify-between">
                   <span className="text-orange-400 uppercase text-[10px] tracking-wider font-semibold">Dirty / EVS</span>
@@ -1902,11 +1891,10 @@ export default function Clinical(): React.ReactElement {
               </div>
               <div
                 onClick={() => setOnlyMyPatients(!onlyMyPatients)}
-                className={`border p-3 flex flex-col justify-between cursor-pointer transition-colors ${
-                  onlyMyPatients
-                    ? 'bg-blue-950/70 border-blue-500 ring-1 ring-blue-500'
-                    : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
-                }`}
+                className={`border p-3 flex flex-col justify-between cursor-pointer transition-colors ${onlyMyPatients
+                  ? 'bg-blue-950/70 border-blue-500 ring-1 ring-blue-500'
+                  : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
+                  }`}
               >
                 <div className="flex items-center justify-between">
                   <span className="text-blue-400 uppercase text-[10px] tracking-wider font-semibold">
@@ -1931,11 +1919,10 @@ export default function Clinical(): React.ReactElement {
                     key={dept}
                     type="button"
                     onClick={() => setBedDeptFilter(dept)}
-                    className={`px-3 py-1.5 sm:px-2.5 sm:py-1 text-xs sm:text-[11px] font-mono uppercase tracking-wider border transition-colors min-h-[36px] sm:min-h-0 flex items-center ${
-                      bedDeptFilter === dept
-                        ? 'bg-white text-zinc-950 font-bold border-white'
-                        : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200'
-                    }`}
+                    className={`px-3 py-1.5 sm:px-2.5 sm:py-1 text-xs sm:text-[11px] font-mono uppercase tracking-wider border transition-colors min-h-[36px] sm:min-h-0 flex items-center ${bedDeptFilter === dept
+                      ? 'bg-white text-zinc-950 font-bold border-white'
+                      : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200'
+                      }`}
                   >
                     {dept.replace('_', ' ')}
                   </button>
@@ -1944,11 +1931,10 @@ export default function Clinical(): React.ReactElement {
                   <button
                     type="button"
                     onClick={() => setOnlyMyPatients(!onlyMyPatients)}
-                    className={`ml-0 sm:ml-2 px-3 py-1.5 sm:px-2.5 sm:py-1 text-xs sm:text-[11px] font-mono uppercase tracking-wider border transition-colors min-h-[36px] sm:min-h-0 flex items-center ${
-                      onlyMyPatients
-                        ? 'bg-blue-600 text-white font-bold border-blue-500 shadow-xs'
-                        : 'bg-zinc-900 text-blue-400 border-zinc-800 hover:border-zinc-700 hover:text-blue-300'
-                    }`}
+                    className={`ml-0 sm:ml-2 px-3 py-1.5 sm:px-2.5 sm:py-1 text-xs sm:text-[11px] font-mono uppercase tracking-wider border transition-colors min-h-[36px] sm:min-h-0 flex items-center ${onlyMyPatients
+                      ? 'bg-blue-600 text-white font-bold border-blue-500 shadow-xs'
+                      : 'bg-zinc-900 text-blue-400 border-zinc-800 hover:border-zinc-700 hover:text-blue-300'
+                      }`}
                   >
                     🩺 My Patients ({beds.filter((b) => b.assigned_nurse_id === claims?.personnel_id).length})
                   </button>
@@ -2120,11 +2106,10 @@ export default function Clinical(): React.ReactElement {
                                 </button>
                                 {bed.acuity_level && (
                                   <span
-                                    className={`text-[9px] px-1 py-0.2 border shrink-0 ${
-                                      bed.acuity_level === 'ESI_1' || bed.acuity_level === 'ESI_2'
-                                        ? 'bg-red-900 text-white border-red-700 font-bold'
-                                        : 'bg-yellow-950 text-yellow-300 border-yellow-800'
-                                    }`}
+                                    className={`text-[9px] px-1 py-0.2 border shrink-0 ${bed.acuity_level === 'ESI_1' || bed.acuity_level === 'ESI_2'
+                                      ? 'bg-red-900 text-white border-red-700 font-bold'
+                                      : 'bg-yellow-950 text-yellow-300 border-yellow-800'
+                                      }`}
                                   >
                                     {bed.acuity_level.replace('ESI_', 'ESI-')}
                                   </span>
@@ -2438,11 +2423,10 @@ export default function Clinical(): React.ReactElement {
                         key={adm.admission_id}
                         type="button"
                         onClick={() => setSelectedVitalsAdmId(adm.admission_id)}
-                        className={`px-4 py-2 border text-xs font-mono uppercase tracking-wider transition-colors ${
-                          isSelected
-                            ? 'bg-white text-zinc-950 font-bold border-white'
-                            : 'bg-zinc-950 text-zinc-300 border-zinc-800 hover:border-zinc-700'
-                        }`}
+                        className={`px-4 py-2 border text-xs font-mono uppercase tracking-wider transition-colors ${isSelected
+                          ? 'bg-white text-zinc-950 font-bold border-white'
+                          : 'bg-zinc-950 text-zinc-300 border-zinc-800 hover:border-zinc-700'
+                          }`}
                       >
                         Bed {adm.bed_code} (Stay #{adm.admission_id})
                       </button>
@@ -2775,13 +2759,12 @@ export default function Clinical(): React.ReactElement {
                             {eq.equipment_type || 'DEVICE'}
                           </span>
                           <span
-                            className={`text-[10px] font-mono px-2 py-0.5 border ${
-                              isAvailable
-                                ? 'bg-green-950 text-green-300 border-green-700'
-                                : isAllocated
+                            className={`text-[10px] font-mono px-2 py-0.5 border ${isAvailable
+                              ? 'bg-green-950 text-green-300 border-green-700'
+                              : isAllocated
                                 ? 'bg-red-950 text-red-300 border-red-700'
                                 : 'bg-zinc-800 text-zinc-400 border-zinc-700'
-                            }`}
+                              }`}
                           >
                             {eq.status}
                           </span>
@@ -2881,8 +2864,8 @@ export default function Clinical(): React.ReactElement {
                     const acuityClass = isEsi1
                       ? 'bg-red-950 border-red-700 text-red-300 animate-pulse'
                       : isEsi2
-                      ? 'bg-orange-950 border-orange-700 text-orange-300'
-                      : 'bg-yellow-950 border-yellow-700 text-yellow-300';
+                        ? 'bg-orange-950 border-orange-700 text-orange-300'
+                        : 'bg-yellow-950 border-yellow-700 text-yellow-300';
 
                     const pId = item.patient.patient_id;
                     const eta = emsEtaMap[pId] || {
@@ -2901,8 +2884,8 @@ export default function Clinical(): React.ReactElement {
                     const cardAlertClasses = isOverdue
                       ? 'border-2 border-red-600 dark:border-red-500 shadow-md ring-1 ring-red-500/40'
                       : isApproaching
-                      ? 'border-2 border-red-500 dark:border-red-500 ring-2 ring-red-500/80 bg-red-50/40 dark:bg-red-950/40 animate-pulse shadow-md'
-                      : 'border border-slate-200 dark:border-zinc-800/90 hover:border-slate-300 dark:hover:border-zinc-700 shadow-sm dark:shadow-md';
+                        ? 'border-2 border-red-500 dark:border-red-500 ring-2 ring-red-500/80 bg-red-50/40 dark:bg-red-950/40 animate-pulse shadow-md'
+                        : 'border border-slate-200 dark:border-zinc-800/90 hover:border-slate-300 dark:hover:border-zinc-700 shadow-sm dark:shadow-md';
 
                     return (
                       <div
@@ -2987,13 +2970,12 @@ export default function Clinical(): React.ReactElement {
                               <span>Ambulance Telemetry</span>
                             </div>
                             <div
-                              className={`font-mono text-xs font-bold px-2 py-0.5 rounded border transition-colors ${
-                                isOverdue
-                                  ? 'bg-red-100 text-red-700 border-red-300 dark:bg-red-950 dark:text-red-300 dark:border-red-800'
-                                  : isApproaching
+                              className={`font-mono text-xs font-bold px-2 py-0.5 rounded border transition-colors ${isOverdue
+                                ? 'bg-red-100 text-red-700 border-red-300 dark:bg-red-950 dark:text-red-300 dark:border-red-800'
+                                : isApproaching
                                   ? 'bg-red-100 text-red-700 border-red-300 dark:bg-red-950 dark:text-red-300 dark:border-red-800 animate-pulse'
                                   : 'bg-slate-200/80 text-slate-800 border-slate-300 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700'
-                              }`}
+                                }`}
                             >
                               {isOverdue
                                 ? `OVERDUE (+${formatEtaDuration(remainingSeconds)})`
@@ -3006,13 +2988,12 @@ export default function Clinical(): React.ReactElement {
                             {/* Road track line */}
                             <div className="h-2 w-full bg-slate-200 dark:bg-zinc-800 rounded-full overflow-hidden relative shadow-inner">
                               <div
-                                className={`h-full transition-all duration-1000 ${
-                                  isOverdue
-                                    ? 'bg-red-600'
-                                    : isApproaching
+                                className={`h-full transition-all duration-1000 ${isOverdue
+                                  ? 'bg-red-600'
+                                  : isApproaching
                                     ? 'bg-linear-to-r from-amber-500 to-red-500'
                                     : 'bg-linear-to-r from-blue-500 via-amber-500 to-emerald-500'
-                                }`}
+                                  }`}
                                 style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }}
                               />
                             </div>
@@ -3023,9 +3004,8 @@ export default function Clinical(): React.ReactElement {
                               style={{ left: `${Math.min(94, Math.max(4, progressPct))}%` }}
                             >
                               <span
-                                className={`text-base leading-none inline-block ${
-                                  isApproaching ? 'animate-bounce drop-shadow-md' : ''
-                                }`}
+                                className={`text-base leading-none inline-block ${isApproaching ? 'animate-bounce drop-shadow-md' : ''
+                                  }`}
                                 title="Ambulance approaching"
                               >
                                 <span className="inline-block transform -scale-x-100">
@@ -3162,13 +3142,12 @@ export default function Clinical(): React.ReactElement {
                     {assigningEmsItem.patient.first_name} {assigningEmsItem.patient.last_name}
                   </span>
                   <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                      assigningEmsItem.admission.acuity_level === 'ESI_1'
-                        ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200 border-red-300 dark:border-red-800'
-                        : assigningEmsItem.admission.acuity_level === 'ESI_2'
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold border ${assigningEmsItem.admission.acuity_level === 'ESI_1'
+                      ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200 border-red-300 dark:border-red-800'
+                      : assigningEmsItem.admission.acuity_level === 'ESI_2'
                         ? 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200 border-orange-300 dark:border-orange-800'
                         : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200 border-amber-300 dark:border-amber-700'
-                    }`}
+                      }`}
                   >
                     {assigningEmsItem.admission.acuity_level?.replace('_', ' ')}
                   </span>
@@ -3322,11 +3301,10 @@ export default function Clinical(): React.ReactElement {
                             return (
                               <label
                                 key={eq.equipment_id}
-                                className={`flex items-center space-x-2.5 p-2 rounded-lg cursor-pointer border text-xs transition-colors ${
-                                  isChecked
-                                    ? 'bg-blue-50/70 dark:bg-blue-950/30 border-blue-200 dark:border-blue-900/60 text-blue-950 dark:text-blue-100'
-                                    : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-700 dark:text-zinc-400'
-                                }`}
+                                className={`flex items-center space-x-2.5 p-2 rounded-lg cursor-pointer border text-xs transition-colors ${isChecked
+                                  ? 'bg-blue-50/70 dark:bg-blue-950/30 border-blue-200 dark:border-blue-900/60 text-blue-950 dark:text-blue-100'
+                                  : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-700 dark:text-zinc-400'
+                                  }`}
                               >
                                 <input
                                   type="checkbox"
@@ -3411,11 +3389,10 @@ export default function Clinical(): React.ReactElement {
                   <button
                     type="button"
                     onClick={() => setAssignOccupyImmediately(false)}
-                    className={`p-3 border rounded-lg text-left transition-all ${
-                      !assignOccupyImmediately
-                        ? 'bg-amber-50 border-amber-500 text-amber-950 dark:bg-amber-950/60 dark:border-amber-600 dark:text-amber-200 ring-2 ring-amber-500/30'
-                        : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:border-slate-300'
-                    }`}
+                    className={`p-3 border rounded-lg text-left transition-all ${!assignOccupyImmediately
+                      ? 'bg-amber-50 border-amber-500 text-amber-950 dark:bg-amber-950/60 dark:border-amber-600 dark:text-amber-200 ring-2 ring-amber-500/30'
+                      : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:border-slate-300'
+                      }`}
                   >
                     <div className="font-bold">Hold Bed (RESERVED)</div>
                     <div className="text-[11px] mt-0.5 opacity-80">
@@ -3425,11 +3402,10 @@ export default function Clinical(): React.ReactElement {
                   <button
                     type="button"
                     onClick={() => setAssignOccupyImmediately(true)}
-                    className={`p-3 border rounded-lg text-left transition-all ${
-                      assignOccupyImmediately
-                        ? 'bg-blue-50 border-blue-500 text-blue-950 dark:bg-blue-950/60 dark:border-blue-600 dark:text-blue-200 ring-2 ring-blue-500/30'
-                        : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:border-slate-300'
-                    }`}
+                    className={`p-3 border rounded-lg text-left transition-all ${assignOccupyImmediately
+                      ? 'bg-blue-50 border-blue-500 text-blue-950 dark:bg-blue-950/60 dark:border-blue-600 dark:text-blue-200 ring-2 ring-blue-500/30'
+                      : 'bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-400 hover:border-slate-300'
+                      }`}
                   >
                     <div className="font-bold">Direct Admit (OCCUPIED)</div>
                     <div className="text-[11px] mt-0.5 opacity-80">
@@ -3458,8 +3434,8 @@ export default function Clinical(): React.ReactElement {
                 {isAssigningBed
                   ? 'Assigning Bed...'
                   : assignOccupyImmediately
-                  ? `Direct Admit to ${assignTargetBedCode || 'Bed'}`
-                  : `Confirm Bed Hold (${assignTargetBedCode || 'Select Bed'})`}
+                    ? `Direct Admit to ${assignTargetBedCode || 'Bed'}`
+                    : `Confirm Bed Hold (${assignTargetBedCode || 'Select Bed'})`}
               </button>
             </div>
           </div>
@@ -3644,11 +3620,10 @@ export default function Clinical(): React.ReactElement {
                         key={lvl}
                         type="button"
                         onClick={() => setAdmitAcuity(lvl)}
-                        className={`py-2 text-xs font-mono text-center border transition-colors ${
-                          admitAcuity === lvl
-                            ? 'border-white bg-white text-zinc-950 font-bold'
-                            : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:border-zinc-700'
-                        }`}
+                        className={`py-2 text-xs font-mono text-center border transition-colors ${admitAcuity === lvl
+                          ? 'border-white bg-white text-zinc-950 font-bold'
+                          : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:border-zinc-700'
+                          }`}
                       >
                         {lvl.replace('ESI_', 'ESI-')}
                       </button>
@@ -3699,8 +3674,8 @@ export default function Clinical(): React.ReactElement {
                     {isAdmitting
                       ? 'Processing Admission...'
                       : admitDirectlyToOccupied
-                      ? 'Confirm & Occupy Bed Now'
-                      : 'Reserve Bed (Triage Hold)'}
+                        ? 'Confirm & Occupy Bed Now'
+                        : 'Reserve Bed (Triage Hold)'}
                   </button>
                 </div>
               </form>
@@ -4192,11 +4167,10 @@ export default function Clinical(): React.ReactElement {
                           <div className="flex items-center justify-between mb-2">
                             <span className="font-bold text-white">Encounter #{adm.admission_id}</span>
                             <span
-                              className={`text-[10px] px-2 py-0.5 border ${
-                                isActive
-                                  ? 'bg-red-950 text-red-300 border-red-800'
-                                  : 'bg-zinc-800 text-zinc-400 border-zinc-700'
-                              }`}
+                              className={`text-[10px] px-2 py-0.5 border ${isActive
+                                ? 'bg-red-950 text-red-300 border-red-800'
+                                : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                                }`}
                             >
                               {isActive ? 'ACTIVE INPATIENT' : 'DISCHARGED'}
                             </span>
@@ -4219,13 +4193,12 @@ export default function Clinical(): React.ReactElement {
                                   📋 Latest Shift Handoff
                                 </span>
                                 <span
-                                  className={`px-1.5 py-0.2 text-[9px] font-bold border rounded-xs ${
-                                    latestHandoffMap[adm.admission_id]?.illness_severity === 'STABLE'
-                                      ? 'bg-emerald-950/80 border-emerald-700 text-emerald-300'
-                                      : latestHandoffMap[adm.admission_id]?.illness_severity === 'WATCHER'
+                                  className={`px-1.5 py-0.2 text-[9px] font-bold border rounded-xs ${latestHandoffMap[adm.admission_id]?.illness_severity === 'STABLE'
+                                    ? 'bg-emerald-950/80 border-emerald-700 text-emerald-300'
+                                    : latestHandoffMap[adm.admission_id]?.illness_severity === 'WATCHER'
                                       ? 'bg-yellow-950/80 border-yellow-700 text-yellow-300'
                                       : 'bg-red-950/80 border-red-700 text-red-300'
-                                  }`}
+                                    }`}
                                 >
                                   {latestHandoffMap[adm.admission_id]?.illness_severity}
                                 </span>
@@ -4266,7 +4239,7 @@ export default function Clinical(): React.ReactElement {
                               <span className="font-semibold text-zinc-200">
                                 {nurseAssignments[adm.admission_id]
                                   ? (nursesList.find((n) => n.personnel_id === nurseAssignments[adm.admission_id]?.nurse_id)?.full_name ||
-                                     `Nurse #${nurseAssignments[adm.admission_id]?.nurse_id}`)
+                                    `Nurse #${nurseAssignments[adm.admission_id]?.nurse_id}`)
                                   : 'Unassigned'}
                               </span>
                             </div>

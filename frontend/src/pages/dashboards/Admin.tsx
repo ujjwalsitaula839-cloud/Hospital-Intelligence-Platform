@@ -507,21 +507,19 @@ export default function Admin(): React.ReactElement {
           <nav className="mt-6 space-y-1.5 font-mono text-xs uppercase tracking-wider">
             <button
               onClick={() => setActiveSection('personnel')}
-              className={`w-full text-left px-3 py-2.5 transition-colors ${
-                activeSection === 'personnel'
-                  ? 'bg-zinc-800 text-white font-bold border-l-2 border-white'
-                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
-              }`}
+              className={`w-full text-left px-3 py-2.5 transition-colors ${activeSection === 'personnel'
+                ? 'bg-zinc-800 text-white font-bold border-l-2 border-white'
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+                }`}
             >
               1. Personnel
             </button>
             <button
               onClick={() => setActiveSection('beds')}
-              className={`w-full text-left px-3 py-2.5 transition-colors ${
-                activeSection === 'beds'
-                  ? 'bg-zinc-800 text-white font-bold border-l-2 border-white'
-                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
-              }`}
+              className={`w-full text-left px-3 py-2.5 transition-colors ${activeSection === 'beds'
+                ? 'bg-zinc-800 text-white font-bold border-l-2 border-white'
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+                }`}
             >
               2. Bed Registry
             </button>
@@ -542,9 +540,9 @@ export default function Admin(): React.ReactElement {
 
         <div className="pt-4 border-t border-zinc-800">
           <div className="mb-2">
-              <ThemeToggle className="w-full justify-start" showLabel={true} />
-            </div>
-            <button
+            <ThemeToggle className="w-full justify-start" showLabel={true} />
+          </div>
+          <button
             onClick={handleLogout}
             className="w-full border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-white py-2 text-xs font-mono tracking-wider transition-colors"
           >
@@ -594,11 +592,10 @@ export default function Admin(): React.ReactElement {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 font-mono text-xs">
               <div
                 onClick={() => setStaffStatusFilter('ALL')}
-                className={`p-4 border cursor-pointer transition-colors ${
-                  staffStatusFilter === 'ALL'
-                    ? 'bg-zinc-800/80 border-white text-white'
-                    : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-300'
-                }`}
+                className={`p-4 border cursor-pointer transition-colors ${staffStatusFilter === 'ALL'
+                  ? 'bg-zinc-800/80 border-white text-white'
+                  : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-300'
+                  }`}
               >
                 <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Total Staff Registered</div>
                 <div className="text-2xl font-bold mt-1 text-white">{staffList.length}</div>
@@ -607,11 +604,10 @@ export default function Admin(): React.ReactElement {
 
               <div
                 onClick={() => setStaffStatusFilter(staffStatusFilter === 'ACTIVE' ? 'ALL' : 'ACTIVE')}
-                className={`p-4 border cursor-pointer transition-colors ${
-                  staffStatusFilter === 'ACTIVE'
-                    ? 'bg-green-950/60 border-green-600 text-green-300'
-                    : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-300'
-                }`}
+                className={`p-4 border cursor-pointer transition-colors ${staffStatusFilter === 'ACTIVE'
+                  ? 'bg-green-950/60 border-green-600 text-green-300'
+                  : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-300'
+                  }`}
               >
                 <div className="text-[10px] text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-green-500 inline-block" /> Active Personnel
@@ -622,11 +618,10 @@ export default function Admin(): React.ReactElement {
 
               <div
                 onClick={() => setStaffStatusFilter(staffStatusFilter === 'INACTIVE' ? 'ALL' : 'INACTIVE')}
-                className={`p-4 border cursor-pointer transition-colors ${
-                  staffStatusFilter === 'INACTIVE'
-                    ? 'bg-red-950/60 border-red-600 text-red-300'
-                    : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-300'
-                }`}
+                className={`p-4 border cursor-pointer transition-colors ${staffStatusFilter === 'INACTIVE'
+                  ? 'bg-red-950/60 border-red-600 text-red-300'
+                  : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-300'
+                  }`}
               >
                 <div className="text-[10px] text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-red-500 inline-block" /> Inactive / Resigned
@@ -665,11 +660,10 @@ export default function Admin(): React.ReactElement {
                       key={st}
                       type="button"
                       onClick={() => setStaffStatusFilter(st)}
-                      className={`px-2.5 py-1 text-[11px] transition-colors ${
-                        staffStatusFilter === st
-                          ? 'bg-zinc-800 text-white font-bold'
-                          : 'text-zinc-400 hover:text-white'
-                      }`}
+                      className={`px-2.5 py-1 text-[11px] transition-colors ${staffStatusFilter === st
+                        ? 'bg-zinc-800 text-white font-bold'
+                        : 'text-zinc-400 hover:text-white'
+                        }`}
                     >
                       {st}
                     </button>

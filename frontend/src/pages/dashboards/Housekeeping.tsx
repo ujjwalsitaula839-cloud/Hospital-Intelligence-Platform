@@ -207,21 +207,19 @@ export default function Housekeeping(): React.ReactElement {
         <div className="flex space-x-8 border-b border-zinc-800 mb-6">
           <button
             onClick={() => setActiveTab('PENDING')}
-            className={`pb-3 text-xs font-mono uppercase tracking-wider transition-colors border-b-2 ${
-              activeTab === 'PENDING'
-                ? 'border-white text-white font-bold'
-                : 'border-transparent text-zinc-500 hover:text-zinc-300'
-            }`}
+            className={`pb-3 text-xs font-mono uppercase tracking-wider transition-colors border-b-2 ${activeTab === 'PENDING'
+              ? 'border-white text-white font-bold'
+              : 'border-transparent text-zinc-500 hover:text-zinc-300'
+              }`}
           >
             Pending ({tasks.filter((t) => t.status === 'PENDING').length})
           </button>
           <button
             onClick={() => setActiveTab('IN_PROGRESS')}
-            className={`pb-3 text-xs font-mono uppercase tracking-wider transition-colors border-b-2 ${
-              activeTab === 'IN_PROGRESS'
-                ? 'border-white text-white font-bold'
-                : 'border-transparent text-zinc-500 hover:text-zinc-300'
-            }`}
+            className={`pb-3 text-xs font-mono uppercase tracking-wider transition-colors border-b-2 ${activeTab === 'IN_PROGRESS'
+              ? 'border-white text-white font-bold'
+              : 'border-transparent text-zinc-500 hover:text-zinc-300'
+              }`}
           >
             In Progress ({tasks.filter((t) => t.status === 'IN_PROGRESS').length})
           </button>
