@@ -41,6 +41,7 @@ export default function ShiftHandoffModal({
   const [activeIndex, setActiveIndex] = useState<number>(0);
   const [forms, setForms] = useState<Record<number, PatientFormState>>({});
   const [vitalsMap, setVitalsMap] = useState<Record<number, Observation | null>>({});
+  const [vitalsFetchState, setVitalsFetchState] = useState<Record<number, 'idle' | 'loading' | 'loaded' | 'error'>>({});
   const [latestHandoffMap, setLatestHandoffMap] = useState<Record<number, NurseHandoff | null>>({});
   const [applyToAll, setApplyToAll] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(false);
@@ -53,6 +54,7 @@ export default function ShiftHandoffModal({
       setForms({});
       setError(null);
       setLoading(false);
+      setVitalsFetchState({});
       return;
     }
 
@@ -87,6 +89,9 @@ export default function ShiftHandoffModal({
     // Fetch latest observations & latest prior handoff for each target bed
     targets.forEach(async (b) => {
       if (!b.admission_id) return;
+
+      setVitalsFetchState((prev) => ({ ...prev, [b.admission_id!]: 'loading' }));
+
       try {
         const obsList = await api.getObservations(b.admission_id);
         if (obsList && obsList.length > 0) {
@@ -97,9 +102,14 @@ export default function ShiftHandoffModal({
               : latest
           );
           setVitalsMap((prev) => ({ ...prev, [b.admission_id!]: latestObs }));
+          setVitalsFetchState((prev) => ({ ...prev, [b.admission_id!]: 'loaded' }));
+        } else {
+          setVitalsMap((prev) => ({ ...prev, [b.admission_id!]: null }));
+          setVitalsFetchState((prev) => ({ ...prev, [b.admission_id!]: 'loaded' }));
         }
       } catch {
-        // Telemetry observation optional
+        setVitalsMap((prev) => ({ ...prev, [b.admission_id!]: null }));
+        setVitalsFetchState((prev) => ({ ...prev, [b.admission_id!]: 'error' }));
       }
 
       try {
@@ -125,6 +135,7 @@ export default function ShiftHandoffModal({
     contingency_plan: '',
   };
   const currentVitals = currentAdmId ? vitalsMap[currentAdmId] : null;
+  const currentVitalsState = currentAdmId ? vitalsFetchState[currentAdmId] : 'idle';
   const incomingHandoff = currentAdmId ? latestHandoffMap[currentAdmId] : null;
 
   const updateField = <K extends keyof PatientFormState>(field: K, value: PatientFormState[K]) => {
@@ -474,7 +485,11 @@ export default function ShiftHandoffModal({
                 Auto-Populated Telemetry & EHR Snapshot
               </span>
               <span className="text-[10px] text-zinc-500">
-                {currentVitals?.observation_datetime
+                {currentVitalsState === 'loading'
+                  ? 'Loading vitals…'
+                  : currentVitalsState === 'error'
+                  ? 'Vitals unavailable'
+                  : currentVitals?.observation_datetime
                   ? `Logged ${new Date(currentVitals.observation_datetime).toLocaleTimeString([], {
                       hour: '2-digit',
                       minute: '2-digit',
@@ -482,7 +497,22 @@ export default function ShiftHandoffModal({
                   : 'No observations on file'}
               </span>
             </div>
-            {currentVitals ? (
+            {currentVitalsState === 'loading' && (
+              <p className="p-2 bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
+                Loading the latest vitals…
+              </p>
+            )}
+            {currentVitalsState === 'error' && (
+              <p className="p-2 bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
+                Unable to load the latest vitals right now.
+              </p>
+            )}
+            {currentVitalsState === 'loaded' && !currentVitals && (
+              <p className="p-2 bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
+                No vitals recorded for this stay yet. Chart vitals before handing over.
+              </p>
+            )}
+            {currentVitalsState === 'loaded' && currentVitals && (
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 sm:gap-2 text-center text-xs">
                 {[
                   { label: 'Heart Rate', value: formatVital(currentVitals.heart_rate_bpm, ' bpm') },
@@ -508,10 +538,6 @@ export default function ShiftHandoffModal({
                   </div>
                 ))}
               </div>
-            ) : (
-              <p className="p-2 bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
-                No vitals recorded for this stay yet. Chart vitals before handing over.
-              </p>
             )}
             {currentBed.equipment && currentBed.equipment.length > 0 && (
               <div className="pt-1 flex items-center gap-1.5 text-[10px] text-zinc-400">

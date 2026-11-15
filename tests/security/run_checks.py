@@ -80,6 +80,7 @@ def backend_rows() -> list:
             "group": "Backend services",
             "hipaa": row["section"],
             "safeguard": row["safeguard"],
+            "finding": row.get("finding", ""),
             "description": row["description"],
             "status": row["status"],
             "detail": (row.get("gap") + "\n" if row.get("gap") else "") + (row.get("detail") or ""),
@@ -169,11 +170,12 @@ def _table(rows, hipaa=False):
             summary = "Why this is a known gap" if r["status"] == "known_gap" else "Technical details"
             detail = f"<details><summary>{summary}</summary><pre>{html.escape(r['detail'].strip()[:4000])}</pre></details>"
         context = f"<small>{html.escape(r['context'])}</small>" if r.get("context") and not hipaa else ""
+        finding = f"<small>{html.escape(r['finding'])}</small>" if r.get("finding") else ""
         if hipaa:
             extra = f"<td>{html.escape(r['hipaa'])}</td><td>{html.escape(r['safeguard'])}</td><td>{html.escape(r['group'])}</td>"
         else:
             extra = f"<td>{html.escape(r['group'])}</td>"
-        body.append(f"<tr><td>{_badge(r['status'])}</td><td>{html.escape(r['description'])}{context}{detail}</td>{extra}</tr>")
+        body.append(f"<tr><td>{_badge(r['status'])}</td><td>{html.escape(r['description'])}{finding}{context}{detail}</td>{extra}</tr>")
     return f"<div class='table-wrap'><table><thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
 
 
