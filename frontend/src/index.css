@@ -23,31 +23,37 @@
 
 :root {
   /* Main application background */
-  --bg-app: #f8fafc; /* Slate 50 */
+  --bg-app: #f8fafc;
+  /* Slate 50 */
   --bg-surface: #ffffff;
   --bg-secondary: #ffffff;
-  
+
   /* Sidebar and navigation background */
   --bg-sidebar: #ffffff;
   --bg-nav: rgba(255, 255, 255, 0.95);
-  
+
   /* Card and panel backgrounds */
   --bg-card: #ffffff;
-  --bg-card-elevated: #f1f5f9; /* Slate 100 */
+  --bg-card-elevated: #f1f5f9;
+  /* Slate 100 */
   --bg-card-muted: #f8fafc;
-  
+
   /* Primary, secondary, and descriptive text */
-  --text-primary: #0f172a; /* Slate 900 */
-  --text-secondary: #1e293b; /* Slate 800 */
-  --text-muted: #334155; /* Slate 700 - high contrast, never washed out */
-  --text-subtle: #475569; /* Slate 600 - minimum 5:1 contrast on white */
-  
+  --text-primary: #0f172a;
+  /* Slate 900 */
+  --text-secondary: #1e293b;
+  /* Slate 800 */
+  --text-muted: #334155;
+  /* Slate 700 - high contrast, never washed out */
+  --text-subtle: #475569;
+  /* Slate 600 - minimum 5:1 contrast on white */
+
   /* Buttons */
   --btn-primary-bg: #0f172a;
   --btn-primary-text: #ffffff;
   --btn-primary-hover: #1e293b;
   --btn-primary-active: #020617;
-  
+
   --btn-secondary-bg: #ffffff;
   --btn-secondary-text: #0f172a;
   --btn-secondary-border: #cbd5e1;
@@ -57,39 +63,39 @@
   --btn-disabled-bg: #f1f5f9;
   --btn-disabled-text: #64748b;
   --btn-disabled-border: #cbd5e1;
-  
+
   /* Inputs & Forms */
   --bg-input: #ffffff;
   --border-input: #cbd5e1;
   --placeholder-input: #64748b;
   --border-focus: #2563eb;
   --ring-focus: rgba(37, 99, 235, 0.2);
-  
+
   /* Tables */
   --table-bg: #ffffff;
   --table-header-bg: #f1f5f9;
   --table-header-text: #0f172a;
   --table-border: #e2e8f0;
   --table-row-hover: #f8fafc;
-  
+
   /* Modals & Dropdowns */
   --modal-bg: #ffffff;
   --modal-backdrop: rgba(15, 23, 42, 0.5);
   --dropdown-bg: #ffffff;
   --dropdown-border: #cbd5e1;
   --notification-bg: #ffffff;
-  
+
   /* Dividers & General Borders */
   --border-primary: #e2e8f0;
   --border-secondary: #cbd5e1;
   --divider: #e2e8f0;
-  
+
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.07);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.08);
   --shadow-modal: 0 20px 25px -5px rgb(0 0 0 / 0.12), 0 8px 10px -6px rgb(0 0 0 / 0.12);
-  
+
   /* Links & Interactive */
   --link-color: #0284c7;
   --link-hover: #0369a1;
@@ -98,19 +104,19 @@
   --status-available-bg: #ecfdf5;
   --status-available-border: #6ee7b7;
   --status-available-text: #065f46;
-  
+
   --status-occupied-bg: #eff6ff;
   --status-occupied-border: #93c5fd;
   --status-occupied-text: #1e40af;
-  
+
   --status-reserved-bg: #fefce8;
   --status-reserved-border: #fde047;
   --status-reserved-text: #854d0e;
-  
+
   --status-dirty-bg: #fef2f2;
   --status-dirty-border: #fca5a5;
   --status-dirty-text: #991b1b;
-  
+
   --status-cleaning-bg: #faf5ff;
   --status-cleaning-border: #d8b4fe;
   --status-cleaning-text: #6b21a8;
@@ -118,31 +124,37 @@
 
 .dark {
   /* Main application background */
-  --bg-app: #09090b; /* Zinc 950 */
-  --bg-surface: #18181b; /* Zinc 900 */
+  --bg-app: #09090b;
+  /* Zinc 950 */
+  --bg-surface: #18181b;
+  /* Zinc 900 */
   --bg-secondary: #18181b;
-  
+
   /* Sidebar and navigation background */
   --bg-sidebar: #18181b;
   --bg-nav: rgba(24, 24, 27, 0.85);
-  
+
   /* Card and panel backgrounds */
   --bg-card: #18181b;
   --bg-card-elevated: #27272a;
   --bg-card-muted: #121215;
-  
+
   /* Primary and secondary text */
-  --text-primary: #f4f4f5; /* Zinc 100 */
-  --text-secondary: #d4d4d8; /* Zinc 300 */
-  --text-muted: #a1a1aa; /* Zinc 400 */
-  --text-subtle: #71717a; /* Zinc 500 */
-  
+  --text-primary: #f4f4f5;
+  /* Zinc 100 */
+  --text-secondary: #d4d4d8;
+  /* Zinc 300 */
+  --text-muted: #a1a1aa;
+  /* Zinc 400 */
+  --text-subtle: #71717a;
+  /* Zinc 500 */
+
   /* Buttons */
   --btn-primary-bg: #f4f4f5;
   --btn-primary-text: #09090b;
   --btn-primary-hover: #e4e4e7;
   --btn-primary-active: #d4d4d8;
-  
+
   --btn-secondary-bg: #27272a;
   --btn-secondary-text: #f4f4f5;
   --btn-secondary-border: #3f3f46;
@@ -152,39 +164,39 @@
   --btn-disabled-bg: #27272a;
   --btn-disabled-text: #71717a;
   --btn-disabled-border: #3f3f46;
-  
+
   /* Inputs & Forms */
   --bg-input: #09090b;
   --border-input: #27272a;
   --placeholder-input: #52525b;
   --border-focus: #38bdf8;
   --ring-focus: rgba(56, 189, 248, 0.2);
-  
+
   /* Tables */
   --table-bg: #18181b;
   --table-header-bg: #121215;
   --table-header-text: #a1a1aa;
   --table-border: #27272a;
   --table-row-hover: #27272a;
-  
+
   /* Modals & Dropdowns */
   --modal-bg: #18181b;
   --modal-backdrop: rgba(0, 0, 0, 0.8);
   --dropdown-bg: #18181b;
   --dropdown-border: #27272a;
   --notification-bg: #18181b;
-  
+
   /* Dividers & General Borders */
   --border-primary: #27272a;
   --border-secondary: #3f3f46;
   --divider: #27272a;
-  
+
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.5);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.5);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
   --shadow-modal: 0 20px 25px -5px rgb(0 0 0 / 0.7);
-  
+
   /* Links & Interactive */
   --link-color: #38bdf8;
   --link-hover: #7dd3fc;
@@ -193,19 +205,19 @@
   --status-available-bg: rgba(6, 78, 59, 0.35);
   --status-available-border: #065f46;
   --status-available-text: #6ee7b7;
-  
+
   --status-occupied-bg: rgba(30, 58, 138, 0.35);
   --status-occupied-border: #1e40af;
   --status-occupied-text: #93c5fd;
-  
+
   --status-reserved-bg: rgba(113, 63, 18, 0.35);
   --status-reserved-border: #854d0e;
   --status-reserved-text: #fde047;
-  
+
   --status-dirty-bg: rgba(127, 29, 29, 0.45);
   --status-dirty-border: #991b1b;
   --status-dirty-text: #fca5a5;
-  
+
   --status-cleaning-bg: rgba(88, 28, 135, 0.35);
   --status-cleaning-border: #6b21a8;
   --status-cleaning-text: #d8b4fe;
@@ -228,6 +240,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .theme-transition,
   .theme-transition *,
   .theme-transition *::before,
@@ -292,15 +305,18 @@ html:not(.dark) [class*="text-zinc-300"]:not(button[class*="text-slate-800"]):no
 
 /* Secondary & Muted text: MUST be deep slate for readability */
 html:not(.dark) [class*="text-zinc-400"] {
-  color: #334155 !important; /* Slate 700 (9.2:1 contrast) */
+  color: #334155 !important;
+  /* Slate 700 (9.2:1 contrast) */
 }
 
 html:not(.dark) [class*="text-zinc-500"] {
-  color: #475569 !important; /* Slate 600 (5.8:1 contrast) */
+  color: #475569 !important;
+  /* Slate 600 (5.8:1 contrast) */
 }
 
 html:not(.dark) [class*="text-zinc-600"] {
-  color: #64748b !important; /* Slate 500 (4.5:1 contrast) */
+  color: #64748b !important;
+  /* Slate 500 (4.5:1 contrast) */
 }
 
 /* Action button text contrast */
@@ -309,15 +325,13 @@ html:not(.dark) button[class*="text-slate-800"] {
 }
 
 /* White text adaptation */
-html:not(.dark) .text-white:not(
-  button.bg-red-600, button.bg-red-700, button[class*="bg-red-600"],
+html:not(.dark) .text-white:not(button.bg-red-600, button.bg-red-700, button[class*="bg-red-600"],
   button.bg-emerald-600, button.bg-emerald-700,
   button.bg-blue-600, button.bg-blue-700,
   button.bg-slate-900, button.bg-zinc-950,
   .btn-primary,
   [data-keep-white="true"],
-  [data-keep-white="true"] *
-) {
+  [data-keep-white="true"] *) {
   color: #0f172a !important;
 }
 
@@ -328,11 +342,13 @@ html:not(.dark) button[class*="bg-red-600"] {
   color: #ffffff !important;
   border-color: #b91c1c !important;
 }
+
 html:not(.dark) button.bg-red-600:hover,
 html:not(.dark) button[class*="bg-red-600"]:hover {
   background-color: #b91c1c !important;
   color: #ffffff !important;
 }
+
 html:not(.dark) button.bg-emerald-600,
 html:not(.dark) button.bg-blue-600,
 html:not(.dark) button.bg-slate-900,
@@ -345,7 +361,7 @@ html:not(.dark) .bg-blue-600 .text-white {
 /* 3. Borders & Dividers */
 html:not(.dark) [class*="border-zinc-800"],
 html:not(.dark) [class*="border-zinc-800/"],
-html:not(.dark) [class*="divide-zinc-800"] > * {
+html:not(.dark) [class*="divide-zinc-800"]>* {
   border-color: #e2e8f0 !important;
 }
 
@@ -429,8 +445,8 @@ html:not(.dark) label {
 }
 
 /* Sub-labels in forms (e.g. 0 - 125, 20 - 240 bpm) */
-html:not(.dark) label + span,
-html:not(.dark) .flex > span[class*="text-zinc-400"] {
+html:not(.dark) label+span,
+html:not(.dark) .flex>span[class*="text-zinc-400"] {
   color: #334155 !important;
   font-weight: 600 !important;
 }
@@ -532,44 +548,44 @@ html:not(.dark) [class*="text-purple-300"].bg-purple-950 {
 }
 
 /* 8. Administrative KPI Cards & Summary Blocks */
-html:not(.dark) .grid > div[class*="border-zinc-800"],
-html:not(.dark) .grid > div[class*="bg-zinc-900"] {
+html:not(.dark) .grid>div[class*="border-zinc-800"],
+html:not(.dark) .grid>div[class*="bg-zinc-900"] {
   background-color: #ffffff !important;
   border: 1px solid #cbd5e1 !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
 }
 
 /* When Total Staff card is selected (staffStatusFilter === 'ALL') */
-html:not(.dark) .grid > div.bg-zinc-800\/80 {
+html:not(.dark) .grid>div.bg-zinc-800\/80 {
   background-color: #0f172a !important;
   border-color: #0f172a !important;
 }
 
-html:not(.dark) .grid > div.bg-zinc-800\/80 * {
+html:not(.dark) .grid>div.bg-zinc-800\/80 * {
   color: #ffffff !important;
 }
 
-html:not(.dark) .grid > div.bg-zinc-800\/80 .text-zinc-500 {
+html:not(.dark) .grid>div.bg-zinc-800\/80 .text-zinc-500 {
   color: #cbd5e1 !important;
 }
 
 /* Active Personnel KPI Card */
-html:not(.dark) .grid > div.bg-green-950\/60 {
+html:not(.dark) .grid>div.bg-green-950\/60 {
   background-color: #ecfdf5 !important;
   border: 2px solid #059669 !important;
 }
 
-html:not(.dark) .grid > div.bg-green-950\/60 * {
+html:not(.dark) .grid>div.bg-green-950\/60 * {
   color: #065f46 !important;
 }
 
 /* Inactive Personnel KPI Card */
-html:not(.dark) .grid > div.bg-red-950\/60 {
+html:not(.dark) .grid>div.bg-red-950\/60 {
   background-color: #fef2f2 !important;
   border: 2px solid #dc2626 !important;
 }
 
-html:not(.dark) .grid > div.bg-red-950\/60 * {
+html:not(.dark) .grid>div.bg-red-950\/60 * {
   color: #991b1b !important;
 }
 
@@ -817,20 +833,61 @@ html:not(.dark) div[style*="hospital_login_bg.jpg"] {
 }
 
 /* Utility Token Classes */
-.bg-theme-app { background-color: var(--bg-app); }
-.bg-theme-surface { background-color: var(--bg-surface); }
-.bg-theme-card { background-color: var(--bg-card); }
-.bg-theme-sidebar { background-color: var(--bg-sidebar); }
-.bg-theme-input { background-color: var(--bg-input); }
-.text-theme-primary { color: var(--text-primary); }
-.text-theme-secondary { color: var(--text-secondary); }
-.text-theme-muted { color: var(--text-muted); }
-.border-theme-primary { border-color: var(--border-primary); }
-.border-theme-secondary { border-color: var(--border-secondary); }
-.shadow-theme-sm { box-shadow: var(--shadow-sm); }
-.shadow-theme-md { box-shadow: var(--shadow-md); }
-.shadow-theme-lg { box-shadow: var(--shadow-lg); }
-.shadow-theme-modal { box-shadow: var(--shadow-modal); }
+.bg-theme-app {
+  background-color: var(--bg-app);
+}
+
+.bg-theme-surface {
+  background-color: var(--bg-surface);
+}
+
+.bg-theme-card {
+  background-color: var(--bg-card);
+}
+
+.bg-theme-sidebar {
+  background-color: var(--bg-sidebar);
+}
+
+.bg-theme-input {
+  background-color: var(--bg-input);
+}
+
+.text-theme-primary {
+  color: var(--text-primary);
+}
+
+.text-theme-secondary {
+  color: var(--text-secondary);
+}
+
+.text-theme-muted {
+  color: var(--text-muted);
+}
+
+.border-theme-primary {
+  border-color: var(--border-primary);
+}
+
+.border-theme-secondary {
+  border-color: var(--border-secondary);
+}
+
+.shadow-theme-sm {
+  box-shadow: var(--shadow-sm);
+}
+
+.shadow-theme-md {
+  box-shadow: var(--shadow-md);
+}
+
+.shadow-theme-lg {
+  box-shadow: var(--shadow-lg);
+}
+
+.shadow-theme-modal {
+  box-shadow: var(--shadow-modal);
+}
 
 /* 14. EMS Inbound Cards, Success Card, & Notifications */
 html:not(.dark) .ems-success-card,
@@ -876,4 +933,28 @@ html:not(.dark) .ems-patient-card span[class*="text-slate-800"] {
 
 html:not(.dark) .ems-patient-card button {
   font-weight: 600 !important;
+}
+
+/* ==========================================================================
+   SLOW ROTATING MARQUEE (CREATED BY TEAM TICKER)
+   ========================================================================== */
+@keyframes marquee-scroll-slow {
+  0% {
+    transform: translateX(0%);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee-slow {
+  display: flex;
+  width: max-content;
+  animation: marquee-scroll-slow 35s linear infinite;
+  will-change: transform;
+}
+
+.animate-marquee-slow:hover {
+  animation-play-state: paused;
 }
