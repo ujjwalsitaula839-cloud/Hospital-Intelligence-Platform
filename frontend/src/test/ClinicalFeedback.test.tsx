@@ -34,6 +34,9 @@ vi.mock('../lib/api', async (importOriginal) => {
       getLatestHandoff: vi.fn().mockResolvedValue(null),
       recordObservation: vi.fn(),
       releaseEquipment: vi.fn(),
+      createBatchHandoff: vi.fn(),
+      createHandoff: vi.fn(),
+      completeNurseAssignment: vi.fn(),
     },
   };
 });
@@ -120,5 +123,51 @@ describe('Clinical action feedback', () => {
 
     await waitFor(() => expect(screen.getByTestId('clinical-action-status')).toHaveTextContent(/Could not release equipment: 403 Forbidden/));
     await waitFor(() => expect(screen.getByTestId('announcer-assertive')).toHaveTextContent(/Could not release equipment/));
+  });
+
+  it('confirms shift handoff and patient reassignment after recording handoff', async () => {
+    vi.mocked(api.getNurses).mockResolvedValue([
+      { personnel_id: 10, username: 'nurse.a', full_name: 'Nurse A, RN', role: 'NURSE', department: 'EMERGENCY', is_active: true, must_change_password: false },
+      { personnel_id: 20, username: 'nurse.b', full_name: 'Nurse B, RN', role: 'NURSE', department: 'EMERGENCY', is_active: true, must_change_password: false },
+    ]);
+    vi.mocked(api.createHandoff).mockResolvedValue({} as never);
+    vi.mocked(api.createBatchHandoff).mockResolvedValue([]);
+
+    renderClinical();
+    fireEvent.click(await screen.findByRole('button', { name: /^Handover$/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: /Bed ED-01/i });
+    const select = within(dialog).getByRole('combobox');
+    fireEvent.change(select, { target: { value: '20' } });
+
+    const submitBtn = within(dialog).getByRole('button', { name: /Confirm Shift Handover/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('clinical-action-status')).toHaveTextContent(
+        'Shift handoff recorded and patients reassigned to the oncoming nurse.'
+      );
+    });
+  });
+
+  it('shows distinct assignment-ended confirmation when ending assignment only, without claiming handoff or reassignment', async () => {
+    vi.mocked(api.getNurseAssignments).mockResolvedValue([
+      { assignment_id: 701, admission_id: 501, nurse_id: 10, start_datetime: new Date().toISOString(), end_datetime: null, status: 'ACTIVE' },
+    ]);
+    vi.mocked(api.completeNurseAssignment).mockResolvedValue({ status: 'SUCCESS', message: 'Assignment ended' });
+
+    renderClinical();
+    fireEvent.click(await screen.findByRole('button', { name: /^Handover$/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: /Bed ED-01/i });
+    const endBtn = within(dialog).getByRole('button', { name: /End Current Shift Assignment Only/i });
+    fireEvent.click(endBtn);
+
+    await waitFor(() => {
+      const status = screen.getByTestId('clinical-action-status');
+      expect(status).toHaveTextContent('Shift assignment ended.');
+      expect(status.textContent).not.toContain('handoff');
+      expect(status.textContent).not.toContain('reassigned');
+    });
   });
 });

@@ -88,17 +88,18 @@ def backend_rows() -> list:
     return rows
 
 
-def frontend_rows() -> list:
+def frontend_rows(runner=subprocess.run) -> list:
     vitest = FRONTEND / "node_modules" / "vitest" / "vitest.mjs"
     node = shutil.which("node")
     if not vitest.exists() or not node:
         raise RuntimeError("Frontend dependencies are missing. Run `npm ci` in frontend/ first.")
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "vitest.json"
-        subprocess.run([node, str(vitest), "run", "--reporter=json", f"--outputFile={out}"],
-                       cwd=FRONTEND, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
+        proc = runner([node, str(vitest), "run", "--reporter=json", f"--outputFile={out}"],
+                      cwd=FRONTEND, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
         if not out.exists():
-            raise RuntimeError("Vitest did not produce a JSON report.")
+            diagnostics = (getattr(proc, "stderr", "") or getattr(proc, "stdout", "") or "").strip()
+            raise RuntimeError(f"Vitest did not produce a JSON report (exit code {getattr(proc, 'returncode', 1)}).\n{diagnostics}")
         data = json.loads(out.read_text(encoding="utf-8"))
 
     rows = []
@@ -143,6 +144,23 @@ def frontend_rows() -> list:
                     "This browser check fails on main today and is marked it.fails until the gap is fixed; "
                     "the test describes the required behaviour." if status == "known_gap" else ""),
             })
+
+    # If Vitest exited nonzero but parsed results don't already reflect a failure/error,
+    # record an error row so teardown or runtime crashes cannot masquerade as an all-green run.
+    has_failures = any(r["status"] in ("failed", "error", "gap_closed") for r in rows)
+    if getattr(proc, "returncode", 0) != 0 and not has_failures:
+        diagnostics = (getattr(proc, "stderr", "") or getattr(proc, "stdout", "") or "").strip()
+        rows.append({
+            "section": "other",
+            "group": "Vitest runner",
+            "hipaa": "",
+            "safeguard": "",
+            "description": f"Vitest runner failed (exit code {proc.returncode})",
+            "context": "Frontend test runner",
+            "status": "error",
+            "detail": diagnostics or f"Vitest process exited with status code {proc.returncode}.",
+        })
+
     return rows
 
 

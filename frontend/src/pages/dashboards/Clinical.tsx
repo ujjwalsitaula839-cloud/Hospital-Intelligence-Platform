@@ -4648,9 +4648,13 @@ export default function Clinical(): React.ReactElement {
         nursesList={nursesList}
         currentUserId={claims?.personnel_id}
         onClose={() => setShiftHandoffBed(null)}
-        onSuccess={async () => {
+        onSuccess={async (outcome = 'handoff') => {
           await fetchBeds({ silent: true });
-          reportStatus('success', 'Shift handoff recorded and patients reassigned to the oncoming nurse.');
+          if (outcome === 'assignment_ended') {
+            reportStatus('success', 'Shift assignment ended.');
+          } else {
+            reportStatus('success', 'Shift handoff recorded and patients reassigned to the oncoming nurse.');
+          }
         }}
       />
 

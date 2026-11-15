@@ -7,6 +7,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from hipaa_runner import RowResult, _describe, CATALOG
+from run_checks import frontend_rows
+import json
 
 
 class MockAssertionFailureTest(unittest.TestCase):
@@ -72,6 +74,76 @@ class RunnerAndCatalogTests(unittest.TestCase):
         self.assertEqual(row["status"], "error")
         self.assertIn("Known-gap test crashed instead of failing its assertion", row["detail"])
         self.assertIn("Unexpected boom", row["detail"])
+
+    def test_vitest_nonzero_exit_with_passing_json_adds_error_result(self):
+        """A nonzero Vitest exit with no failed assertions must produce an error result with diagnostics."""
+        def fake_runner(cmd, **kwargs):
+            out_file = None
+            for arg in cmd:
+                if str(arg).startswith("--outputFile="):
+                    out_file = Path(str(arg).split("=", 1)[1])
+            if out_file:
+                payload = {
+                    "testResults": [
+                        {
+                            "name": "Dummy.test.tsx",
+                            "status": "passed",
+                            "assertionResults": [
+                                {"title": "renders page", "ancestorTitles": ["Suite"], "status": "passed"}
+                            ],
+                        }
+                    ]
+                }
+                out_file.write_text(json.dumps(payload), encoding="utf-8")
+
+            class FakeProc:
+                returncode = 1
+                stderr = "Unhandled runtime rejection during test worker teardown"
+                stdout = ""
+            return FakeProc()
+
+        rows = frontend_rows(runner=fake_runner)
+        error_rows = [r for r in rows if r["status"] == "error"]
+        self.assertEqual(len(error_rows), 1)
+        self.assertIn("Vitest runner failed (exit code 1)", error_rows[0]["description"])
+        self.assertIn("Unhandled runtime rejection during test worker teardown", error_rows[0]["detail"])
+
+    def test_vitest_nonzero_exit_with_failed_test_does_not_duplicate_error(self):
+        """Ordinary test assertion failure already causes nonzero exit; do not add duplicate runner error."""
+        def fake_runner(cmd, **kwargs):
+            out_file = None
+            for arg in cmd:
+                if str(arg).startswith("--outputFile="):
+                    out_file = Path(str(arg).split("=", 1)[1])
+            if out_file:
+                payload = {
+                    "testResults": [
+                        {
+                            "name": "Dummy.test.tsx",
+                            "status": "failed",
+                            "assertionResults": [
+                                {
+                                    "title": "renders page",
+                                    "ancestorTitles": ["Suite"],
+                                    "status": "failed",
+                                    "failureMessages": ["AssertionError: expected true to be false"],
+                                }
+                            ],
+                        }
+                    ]
+                }
+                out_file.write_text(json.dumps(payload), encoding="utf-8")
+
+            class FakeProc:
+                returncode = 1
+                stderr = "Tests failed"
+                stdout = ""
+            return FakeProc()
+
+        rows = frontend_rows(runner=fake_runner)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "failed")
+        self.assertEqual(rows[0]["description"], "renders page")
 
 
 if __name__ == "__main__":
