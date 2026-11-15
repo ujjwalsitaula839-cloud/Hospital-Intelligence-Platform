@@ -1,5 +1,6 @@
-# Reproduce the audited backend versions. Upgrade this set with the application.
+# Versions match the services' own requirements. Installed only inside the throwaway test container.
 fastapi==0.115.6
+pydantic==2.10.4
 httpx==0.28.1
 sqlalchemy==2.0.36
 PyJWT==2.10.1
