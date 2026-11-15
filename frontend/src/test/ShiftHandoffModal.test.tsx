@@ -271,7 +271,7 @@ describe('ShiftHandoffModal Component (I-PASS Framework)', () => {
 
     await waitFor(() => {
       expect(api.createBatchHandoff).toHaveBeenCalledTimes(1);
-      expect(defaultProps.onSuccess).toHaveBeenCalled();
+      expect(defaultProps.onSuccess).toHaveBeenCalledWith('handoff');
       expect(defaultProps.onClose).toHaveBeenCalled();
     });
   });
@@ -284,7 +284,7 @@ describe('ShiftHandoffModal Component (I-PASS Framework)', () => {
 
     await waitFor(() => {
       expect(api.completeNurseAssignment).toHaveBeenCalledWith(77);
-      expect(defaultProps.onSuccess).toHaveBeenCalled();
+      expect(defaultProps.onSuccess).toHaveBeenCalledWith('assignment_ended');
     });
   });
 });

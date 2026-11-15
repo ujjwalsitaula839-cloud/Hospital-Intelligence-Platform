@@ -10,7 +10,7 @@ export interface ShiftHandoffModalProps {
   nursesList: StaffMember[];
   currentUserId?: number;
   onClose: () => void;
-  onSuccess: () => Promise<void>;
+  onSuccess: (outcome?: 'handoff' | 'assignment_ended') => Promise<void> | void;
 }
 
 const NOT_RECORDED = '—';
@@ -210,7 +210,7 @@ export default function ShiftHandoffModal({
         await api.createBatchHandoff(batchPayload);
       }
 
-      await onSuccess();
+      await onSuccess('handoff');
       onClose();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to complete shift handover.');
@@ -230,7 +230,7 @@ export default function ShiftHandoffModal({
         throw new Error('No active assignment found to release.');
       }
       await api.completeNurseAssignment(active.assignment_id);
-      await onSuccess();
+      await onSuccess('assignment_ended');
 
       const remaining = patientBeds.filter((b) => b.bed_id !== currentBed.bed_id);
       if (remaining.length === 0) {
