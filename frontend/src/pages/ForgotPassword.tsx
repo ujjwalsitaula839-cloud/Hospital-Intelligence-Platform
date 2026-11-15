@@ -35,7 +35,7 @@ export default function ForgotPassword(): React.ReactElement {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
+    <div className="auth-page min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
       <div className="fixed top-4 right-4 z-50">
         <ThemeToggle />
       </div>
@@ -105,11 +105,13 @@ export default function ForgotPassword(): React.ReactElement {
           /* Reset Request Form */
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-2">
+              <label htmlFor="forgot-email" className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-2">
                 Staff Institutional Email
               </label>
               <input
+                id="forgot-email"
                 type="email"
+                autoComplete="username"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}

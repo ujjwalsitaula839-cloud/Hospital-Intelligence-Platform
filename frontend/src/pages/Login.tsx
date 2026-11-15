@@ -1,24 +1,27 @@
 import ThemeToggle from '../components/navigation/ThemeToggle';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import type { Role } from '../types';
 
+// Shortcuts and "remember me" persist the email only — passwords are never written to browser storage.
 interface SavedShortcut {
   id: string;
   name: string;
   email: string;
-  password?: string;
   role: string;
   icon: string;
   isCustom?: boolean;
 }
 
+const SHORTCUTS_KEY = 'hip_saved_shortcuts';
+const REMEMBERED_LOGIN_KEY = 'hip_remembered_login';
+
 const DEFAULT_SHORTCUTS: SavedShortcut[] = [
-  { id: 'admin', name: 'Administrator', email: 'admin@hospital.org', password: '', role: 'ADMIN', icon: '🛡️' },
-  { id: 'nurse', name: 'Clinical Nurse', email: 'nurse_carol@hospital.org', password: '', role: 'NURSE', icon: '🩺' },
-  { id: 'doctor', name: 'Attending Doctor', email: 'doctor_chen@hospital.org', password: '', role: 'DOCTOR', icon: '👨‍⚕️' },
-  { id: 'cleaner', name: 'Housekeeping', email: 'cleaner_bob@hospital.org', password: '', role: 'CLEANING_CREW', icon: '🧹' },
+  { id: 'admin', name: 'Administrator', email: 'admin@hospital.org', role: 'ADMIN', icon: '🛡️' },
+  { id: 'nurse', name: 'Clinical Nurse', email: 'nurse_carol@hospital.org', role: 'NURSE', icon: '🩺' },
+  { id: 'doctor', name: 'Attending Doctor', email: 'doctor_chen@hospital.org', role: 'DOCTOR', icon: '👨‍⚕️' },
+  { id: 'cleaner', name: 'Housekeeping', email: 'cleaner_bob@hospital.org', role: 'CLEANING_CREW', icon: '🧹' },
 ];
 
 function getDashboardPath(role: Role): string {
@@ -40,36 +43,44 @@ export default function Login(): React.ReactElement {
 
   const { login } = useAuth();
   const navigate = useNavigate();
+  const passwordInputRef = useRef<HTMLInputElement>(null);
 
-  // Load saved shortcuts and remember-me on mount
+  // Load saved shortcuts and remember-me on mount, scrubbing any password saved by older versions.
   useEffect(() => {
     try {
-      const stored = localStorage.getItem('hip_saved_shortcuts');
+      const stored = localStorage.getItem(SHORTCUTS_KEY);
       if (stored) {
-        const parsed = JSON.parse(stored) as SavedShortcut[];
+        const parsed = JSON.parse(stored) as (SavedShortcut & { password?: string })[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const sanitized = parsed.map((item) => {
+          const hadStoredPassword = parsed.some((item) => 'password' in item);
+          const sanitized: SavedShortcut[] = parsed.map((item) => {
             const fallback = DEFAULT_SHORTCUTS.find((d) => d.id === item.id);
             const needsEmailFix = !item.email || item.email.includes('[') || item.email === 'dr_smith@hospital.org' || item.email === 'nurse_jane@hospital.org';
             return {
-              ...item,
+              id: item.id,
+              name: item.name,
+              role: item.role,
+              icon: item.icon,
+              isCustom: item.isCustom,
               email: needsEmailFix ? (fallback?.email || item.email) : item.email,
-              password: item.password || '',
             };
           });
           setShortcuts(sanitized);
+          if (hadStoredPassword) {
+            localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(sanitized));
+          }
         }
       }
 
-      const remembered = localStorage.getItem('hip_remembered_login');
+      const remembered = localStorage.getItem(REMEMBERED_LOGIN_KEY);
       if (remembered) {
-        const creds = JSON.parse(remembered) as { email: string; password?: string };
+        const creds = JSON.parse(remembered) as { email?: string; password?: string };
         if (creds.email) {
           setUsername(creds.email);
-          if (creds.password) {
-            setPassword(creds.password);
-            setRememberMe(true);
-          }
+          setRememberMe(true);
+        }
+        if ('password' in creds) {
+          localStorage.setItem(REMEMBERED_LOGIN_KEY, JSON.stringify({ email: creds.email }));
         }
       }
     } catch {
@@ -88,14 +99,15 @@ export default function Login(): React.ReactElement {
       return;
     }
 
+    setLoading(true);
     try {
       const claims = await login({ email: trimmedEmail, password });
 
-      // Handle remember me
+      // Handle remember me (email only)
       if (rememberMe) {
-        localStorage.setItem('hip_remembered_login', JSON.stringify({ email: username.trim(), password }));
+        localStorage.setItem(REMEMBERED_LOGIN_KEY, JSON.stringify({ email: username.trim() }));
       } else {
-        localStorage.removeItem('hip_remembered_login');
+        localStorage.removeItem(REMEMBERED_LOGIN_KEY);
       }
 
       if (claims.must_change_password) {
@@ -111,19 +123,17 @@ export default function Login(): React.ReactElement {
     }
   };
 
-  const selectPersona = (userEmail: string, userPass?: string) => {
+  const selectPersona = (userEmail: string) => {
     setUsername(userEmail);
-    if (userPass) {
-      setPassword(userPass);
-    }
     setError(null);
     setSaveSuccessMsg(null);
+    passwordInputRef.current?.focus();
   };
 
-  // Save current username & password into a chosen shortcut slot
+  // Save the current email into a chosen shortcut slot (the password is never stored)
   const saveCurrentToSlot = (slotId: string) => {
-    if (!username.trim() || !password) {
-      setError('Please enter both an Email/Username and Password above before saving to a shortcut.');
+    if (!username.trim()) {
+      setError('Please enter an email address above before saving it to a shortcut.');
       return;
     }
 
@@ -132,7 +142,6 @@ export default function Login(): React.ReactElement {
         return {
           ...s,
           email: username.trim(),
-          password: password,
           isCustom: true,
         };
       }
@@ -141,13 +150,13 @@ export default function Login(): React.ReactElement {
 
     setShortcuts(updated);
     try {
-      localStorage.setItem('hip_saved_shortcuts', JSON.stringify(updated));
+      localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(updated));
     } catch {
       // Ignore storage errors
     }
 
     const targetName = shortcuts.find((s) => s.id === slotId)?.name || slotId;
-    setSaveSuccessMsg(`✓ Saved your credentials to the "${targetName}" shortcut!`);
+    setSaveSuccessMsg(`✓ Saved this email to the "${targetName}" shortcut.`);
     setIsAssigningToSlot(false);
     setError(null);
   };
@@ -156,7 +165,7 @@ export default function Login(): React.ReactElement {
   const resetShortcuts = () => {
     setShortcuts(DEFAULT_SHORTCUTS);
     try {
-      localStorage.removeItem('hip_saved_shortcuts');
+      localStorage.removeItem(SHORTCUTS_KEY);
     } catch {
       // Ignore
     }
@@ -166,7 +175,7 @@ export default function Login(): React.ReactElement {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center p-4 text-zinc-100 relative bg-zinc-950"
+      className="auth-page min-h-screen flex items-center justify-center p-4 text-zinc-100 relative bg-zinc-950"
       style={{
         backgroundImage: `linear-gradient(to bottom, rgba(9, 9, 11, 0.78), rgba(9, 9, 11, 0.90)), url('/hospital_login_bg.jpg')`,
         backgroundSize: 'cover',
@@ -219,7 +228,7 @@ export default function Login(): React.ReactElement {
         )}
 
         {error && (
-          <div className="mb-4 p-3 border border-red-700 bg-red-950/80 text-red-200 text-xs font-mono">
+          <div role="alert" className="mb-4 p-3 border border-red-700 bg-red-950/80 text-red-200 text-xs font-mono">
             {error}
           </div>
         )}
@@ -227,11 +236,13 @@ export default function Login(): React.ReactElement {
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1.5">
+            <label htmlFor="login-email" className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1.5">
               Staff Institutional Email
             </label>
             <input
+              id="login-email"
               type="email"
+              autoComplete="username"
               required
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -242,7 +253,7 @@ export default function Login(): React.ReactElement {
 
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300">
+              <label htmlFor="login-password" className="block text-xs font-mono uppercase tracking-wider text-zinc-300">
                 Password
               </label>
               <div className="flex items-center gap-3">
@@ -263,7 +274,10 @@ export default function Login(): React.ReactElement {
             </div>
             <div className="relative">
               <input
+                id="login-password"
+                ref={passwordInputRef}
                 type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -314,7 +328,7 @@ export default function Login(): React.ReactElement {
                 ))}
               </div>
               <div className="text-[10px] text-zinc-500">
-                Credentials will be stored securely in your browser's private local storage.
+                Only the email is saved in this browser. Passwords are never stored.
               </div>
             </div>
           )}
@@ -322,6 +336,7 @@ export default function Login(): React.ReactElement {
           <button
             type="submit"
             disabled={loading}
+            aria-busy={loading}
             className="w-full bg-white text-zinc-950 hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-400 py-3 text-xs font-mono uppercase tracking-wider font-bold transition-colors shadow-sm mt-1"
           >
             {loading ? 'Authenticating Credentials...' : 'Sign In to Workstation'}
@@ -350,7 +365,7 @@ export default function Login(): React.ReactElement {
               <button
                 key={s.id}
                 type="button"
-                onClick={() => selectPersona(s.email, s.password)}
+                onClick={() => selectPersona(s.email)}
                 className={`p-2 border text-left transition-colors relative group ${username === s.email
                   ? 'border-white bg-zinc-800'
                   : 'border-zinc-800 bg-zinc-950/70 hover:bg-zinc-800 hover:border-zinc-600'

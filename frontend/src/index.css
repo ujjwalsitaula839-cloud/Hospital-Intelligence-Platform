@@ -1,6 +1,9 @@
 @import "tailwindcss";
 @config "../tailwind.config.ts";
 
+/* Drive Tailwind `dark:` variants from the app's .dark class (ThemeContext), not the OS setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-display: "Playfair Display", Georgia, serif;
   --font-body: Inter, system-ui, -apple-system, sans-serif;
@@ -876,4 +879,11 @@ html:not(.dark) .ems-patient-card span[class*="text-slate-800"] {
 
 html:not(.dark) .ems-patient-card button {
   font-weight: 600 !important;
+}
+
+/* Visible keyboard focus on the sign-in and password pages (WCAG 2.4.7).
+   Unlayered, so it takes precedence over Tailwind's outline-none utilities. */
+.auth-page :is(a, button, input, select, textarea):focus-visible {
+  outline: 2px solid #0284c7;
+  outline-offset: 2px;
 }
