@@ -271,10 +271,11 @@ export default function Housekeeping(): React.ReactElement {
                   {/* IN_PROGRESS: Textarea for Disinfection Notes */}
                   {task.status === 'IN_PROGRESS' && (
                     <div className="mb-4">
-                      <label className="block text-xs font-mono text-zinc-400 uppercase tracking-wider mb-1">
+                      <label htmlFor={`cleaning-notes-${task.cleaning_id}`} className="block text-xs font-mono text-zinc-400 uppercase tracking-wider mb-1">
                         Disinfection Notes
                       </label>
                       <textarea
+                        id={`cleaning-notes-${task.cleaning_id}`}
                         rows={2}
                         value={notes[task.cleaning_id] || ''}
                         onChange={(e) =>

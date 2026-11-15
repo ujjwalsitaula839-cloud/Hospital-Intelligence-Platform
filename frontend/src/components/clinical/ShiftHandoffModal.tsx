@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { useDialog } from '../../hooks/useDialog';
 import type { Bed, IllnessSeverity, NurseHandoff, Observation, StaffMember } from '../../types';
 
 export interface ShiftHandoffModalProps {
@@ -10,6 +11,13 @@ export interface ShiftHandoffModalProps {
   currentUserId?: number;
   onClose: () => void;
   onSuccess: () => Promise<void>;
+}
+
+const NOT_RECORDED = '—';
+
+/** Shows a recorded vital with its unit, or an explicit "not recorded" dash — never a made-up default. */
+function formatVital(value: number | null | undefined, unit: string): string {
+  return value == null ? NOT_RECORDED : `${value}${unit}`;
 }
 
 interface PatientFormState {
@@ -82,7 +90,13 @@ export default function ShiftHandoffModal({
       try {
         const obsList = await api.getObservations(b.admission_id);
         if (obsList && obsList.length > 0) {
-          setVitalsMap((prev) => ({ ...prev, [b.admission_id!]: obsList[0] }));
+          // The API returns observations oldest-first; the handoff snapshot must show the most recent one.
+          const latestObs = obsList.reduce((latest, obs) =>
+            new Date(obs.observation_datetime).getTime() > new Date(latest.observation_datetime).getTime()
+              ? obs
+              : latest
+          );
+          setVitalsMap((prev) => ({ ...prev, [b.admission_id!]: latestObs }));
         }
       } catch {
         // Telemetry observation optional
@@ -96,6 +110,8 @@ export default function ShiftHandoffModal({
       }
     });
   }, [isOpen, initialBed, allBeds, currentUserId]);
+
+  const dialogRef = useDialog<HTMLDivElement>(isOpen && patientBeds.length > 0, onClose);
 
   if (!isOpen || patientBeds.length === 0) return null;
 
@@ -225,7 +241,7 @@ export default function ShiftHandoffModal({
       <div className="fixed inset-0 bg-black/80 backdrop-blur-xs" onClick={onClose} />
 
       {/* Modal Dialog Card: Bottom-sheet on mobile (<sm), centered dialog on tablet/desktop (sm+) */}
-      <div className="relative z-10 w-full sm:max-w-2xl bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-4 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-[92vh] sm:my-6 flex flex-col">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-handoff-title" tabIndex={-1} className="relative z-10 w-full sm:max-w-2xl bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-4 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-[92vh] sm:my-6 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
           <div>
@@ -237,11 +253,11 @@ export default function ShiftHandoffModal({
                 • The Joint Commission NPSG.02.05.01
               </span>
             </div>
-            <h3 className="text-base sm:text-lg font-bold text-white mt-0.5">
+            <h2 id="dlg-handoff-title" className="text-base sm:text-lg font-bold text-white mt-0.5">
               Bed {currentBed.bed_code} • Rm {currentBed.room_number}
-            </h3>
+            </h2>
           </div>
-          <button
+          <button aria-label="Close"
             type="button"
             onClick={onClose}
             className="text-zinc-400 hover:text-white text-lg sm:text-base p-2 sm:p-1 transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
@@ -392,6 +408,7 @@ export default function ShiftHandoffModal({
               )}
             </div>
             <select
+              aria-label="Oncoming nurse (relief)"
               value={currentForm.to_nurse_id}
               onChange={(e) => updateField('to_nurse_id', e.target.value ? Number(e.target.value) : '')}
               required
@@ -462,43 +479,40 @@ export default function ShiftHandoffModal({
                       hour: '2-digit',
                       minute: '2-digit',
                     })}`
-                  : 'Bedside telemetry snapshot'}
+                  : 'No observations on file'}
               </span>
             </div>
-            <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 sm:gap-2 text-center text-xs">
-              <div className="p-1.5 bg-zinc-900 border border-zinc-800">
-                <div className="text-[9px] text-zinc-500 uppercase">Heart Rate</div>
-                <div className="font-bold text-white mt-0.5">
-                  {currentVitals?.heart_rate_bpm ? `${currentVitals.heart_rate_bpm} bpm` : '74 bpm'}
-                </div>
+            {currentVitals ? (
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 sm:gap-2 text-center text-xs">
+                {[
+                  { label: 'Heart Rate', value: formatVital(currentVitals.heart_rate_bpm, ' bpm') },
+                  {
+                    label: 'Blood Press.',
+                    value:
+                      currentVitals.systolic_bp != null && currentVitals.diastolic_bp != null
+                        ? `${currentVitals.systolic_bp}/${currentVitals.diastolic_bp}`
+                        : NOT_RECORDED,
+                  },
+                  { label: 'SpO2', value: formatVital(currentVitals.oxygen_saturation_pct, '%') },
+                  { label: 'Temp', value: formatVital(currentVitals.temperature_celsius, ' °C') },
+                  { label: 'Resp Rate', value: formatVital(currentVitals.respiratory_rate, '/m') },
+                ].map(({ label, value }) => (
+                  <div key={label} className="p-1.5 bg-zinc-900 border border-zinc-800">
+                    <div className="text-[9px] text-zinc-500 uppercase">{label}</div>
+                    <div
+                      className={`font-bold mt-0.5 ${value === NOT_RECORDED ? 'text-zinc-400' : 'text-white'}`}
+                      title={value === NOT_RECORDED ? 'Not recorded in the latest observation' : undefined}
+                    >
+                      {value}
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="p-1.5 bg-zinc-900 border border-zinc-800">
-                <div className="text-[9px] text-zinc-500 uppercase">Blood Press.</div>
-                <div className="font-bold text-white mt-0.5">
-                  {currentVitals?.systolic_bp && currentVitals?.diastolic_bp
-                    ? `${currentVitals.systolic_bp}/${currentVitals.diastolic_bp}`
-                    : '120/80'}
-                </div>
-              </div>
-              <div className="p-1.5 bg-zinc-900 border border-zinc-800">
-                <div className="text-[9px] text-zinc-500 uppercase">SpO2</div>
-                <div className="font-bold text-white mt-0.5">
-                  {currentVitals?.oxygen_saturation_pct ? `${currentVitals.oxygen_saturation_pct}%` : '98%'}
-                </div>
-              </div>
-              <div className="p-1.5 bg-zinc-900 border border-zinc-800">
-                <div className="text-[9px] text-zinc-500 uppercase">Temp</div>
-                <div className="font-bold text-white mt-0.5">
-                  {currentVitals?.temperature_celsius ? `${currentVitals.temperature_celsius} °C` : '37.0 °C'}
-                </div>
-              </div>
-              <div className="p-1.5 bg-zinc-900 border border-zinc-800">
-                <div className="text-[9px] text-zinc-500 uppercase">Resp Rate</div>
-                <div className="font-bold text-white mt-0.5">
-                  {currentVitals?.respiratory_rate ? `${currentVitals.respiratory_rate}/m` : '16/m'}
-                </div>
-              </div>
-            </div>
+            ) : (
+              <p className="p-2 bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
+                No vitals recorded for this stay yet. Chart vitals before handing over.
+              </p>
+            )}
             {currentBed.equipment && currentBed.equipment.length > 0 && (
               <div className="pt-1 flex items-center gap-1.5 text-[10px] text-zinc-400">
                 <span className="text-zinc-500">Active Devices:</span>
@@ -509,10 +523,10 @@ export default function ShiftHandoffModal({
 
           {/* Section 3: Situation & Clinical Course Summary */}
           <div className="space-y-1.5">
-            <label className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
+            <label htmlFor="handoff-patient-summary-clinical-course" className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
               Patient Summary & Clinical Course
             </label>
-            <textarea
+            <textarea id="handoff-patient-summary-clinical-course"
               rows={3}
               value={currentForm.patient_summary}
               onChange={(e) => updateField('patient_summary', e.target.value)}
@@ -523,10 +537,10 @@ export default function ShiftHandoffModal({
 
           {/* Section 4: Action Items & Shift To-Do Checklist */}
           <div className="space-y-1.5">
-            <label className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
+            <label htmlFor="handoff-action-items-shift-checklist" className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
               Action Items & Shift Checklist
             </label>
-            <textarea
+            <textarea id="handoff-action-items-shift-checklist"
               rows={2}
               value={currentForm.action_items}
               onChange={(e) => updateField('action_items', e.target.value)}
@@ -537,10 +551,10 @@ export default function ShiftHandoffModal({
 
           {/* Section 5: Contingency Planning */}
           <div className="space-y-1.5">
-            <label className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
+            <label htmlFor="handoff-contingency-planning-what-to-watch-for" className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
               Contingency Planning (What to Watch For)
             </label>
-            <textarea
+            <textarea id="handoff-contingency-planning-what-to-watch-for"
               rows={2}
               value={currentForm.contingency_plan}
               onChange={(e) => updateField('contingency_plan', e.target.value)}

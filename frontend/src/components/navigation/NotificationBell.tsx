@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Bell, CheckCheck, Trash2, X } from 'lucide-react';
+import { BED_STATUS_STYLES } from '../../lib/bedStatus';
+import { useAnnounce } from '../a11y/Announcer';
+import type { BedStatus } from '../../types';
 
 export interface AppNotification {
   id: string;
@@ -22,21 +25,28 @@ interface NotificationBellProps {
   className?: string;
 }
 
+// Bed-status events reuse the shared bed-status palette so a status looks the same everywhere.
+const BED_EVENT_STATUS: Record<string, BedStatus> = {
+  AVAILABLE: 'AVAILABLE',
+  BED_AVAILABLE: 'AVAILABLE',
+  RESERVED: 'RESERVED',
+  BED_RESERVED: 'RESERVED',
+  OCCUPIED: 'OCCUPIED',
+  BED_OCCUPIED: 'OCCUPIED',
+  DIRTY: 'DIRTY',
+  BED_DIRTY: 'DIRTY',
+  CLEANING_IN_PROGRESS: 'CLEANING_IN_PROGRESS',
+  CLEANING_STARTED: 'CLEANING_IN_PROGRESS',
+  MAINTENANCE: 'MAINTENANCE',
+};
+
 function getEventBadgeStyle(eventType: string, status?: string): string {
   const code = (status || eventType || '').toUpperCase();
+  const bedStatus = BED_EVENT_STATUS[code];
+  if (bedStatus) {
+    return BED_STATUS_STYLES[bedStatus].badge;
+  }
   switch (code) {
-    case 'AVAILABLE':
-    case 'BED_AVAILABLE':
-      return 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/90 dark:text-emerald-300 dark:border-emerald-700/80';
-    case 'RESERVED':
-    case 'BED_RESERVED':
-      return 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/90 dark:text-amber-300 dark:border-amber-700/80';
-    case 'OCCUPIED':
-    case 'BED_OCCUPIED':
-      return 'bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/90 dark:text-sky-300 dark:border-sky-700/80';
-    case 'DIRTY':
-    case 'BED_DIRTY':
-      return 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-red-950/90 dark:text-red-300 dark:border-red-700/80';
     case 'HOLD_CANCELLED':
       return 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-800/80';
     case 'AMBULANCE_APPROACHING':
@@ -65,6 +75,23 @@ export default function NotificationBell({
   const hasUnread = unreadCount > 0;
   const badgeLabel = unreadCount > 9 ? '9+' : `${unreadCount}`;
   const buttonLabel = hasUnread ? `Notifications (${unreadCount} unread)` : 'Notifications';
+
+  // Announce newly arrived notifications to screen readers (not the backlog present on first render).
+  const announce = useAnnounce();
+  const seenIdsRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (seenIdsRef.current === null) {
+      seenIdsRef.current = new Set(notifications.map((n) => n.id));
+      return;
+    }
+    const fresh = notifications.filter((n) => !n.read && !seenIdsRef.current!.has(n.id));
+    notifications.forEach((n) => seenIdsRef.current!.add(n.id));
+    if (fresh.length === 1) {
+      announce(`New notification: ${fresh[0].title}. ${fresh[0].message}`);
+    } else if (fresh.length > 1) {
+      announce(`${fresh.length} new notifications. Latest: ${fresh[0].title}.`);
+    }
+  }, [notifications, announce]);
 
   // Toggle dropdown
   const handleToggle = () => {

@@ -152,6 +152,39 @@ describe('ShiftHandoffModal Component (I-PASS Framework)', () => {
     });
   });
 
+  it('shows the most recent observation even though the API returns them oldest-first', async () => {
+    const older: Observation = { ...mockObservation, observation_id: 1, observation_datetime: '2026-11-14T09:00:00Z', heart_rate_bpm: 117 };
+    const newest: Observation = {
+      ...mockObservation,
+      observation_id: 2,
+      observation_datetime: '2026-11-14T13:56:00Z',
+      heart_rate_bpm: 92,
+      temperature_celsius: null,
+      respiratory_rate: null,
+    };
+    vi.mocked(api.getObservations).mockResolvedValue([older, newest]);
+
+    render(<ShiftHandoffModal {...defaultProps} />);
+
+    await waitFor(() => expect(screen.getByText('92 bpm')).toBeInTheDocument());
+    expect(screen.queryByText('117 bpm')).not.toBeInTheDocument();
+    // Fields missing from the latest reading are shown as not recorded, never as invented normals.
+    expect(screen.queryByText('37.0 °C')).not.toBeInTheDocument();
+    expect(screen.queryByText('16/m')).not.toBeInTheDocument();
+    expect(screen.getAllByText('—')).toHaveLength(2);
+  });
+
+  it('shows a "No vitals recorded" state instead of fabricated vitals when none exist', async () => {
+    vi.mocked(api.getObservations).mockResolvedValue([]);
+
+    render(<ShiftHandoffModal {...defaultProps} />);
+
+    await waitFor(() => expect(screen.getByText(/No vitals recorded for this stay yet/i)).toBeInTheDocument());
+    for (const fabricated of ['74 bpm', '120/80', '98%', '37.0 °C', '16/m']) {
+      expect(screen.queryByText(fabricated)).not.toBeInTheDocument();
+    }
+  });
+
   it('displays incoming shift handoff notes from the previous nurse', async () => {
     render(<ShiftHandoffModal {...defaultProps} />);
 

@@ -91,6 +91,8 @@ export default function ElonChatWidget(): React.ReactElement {
       {isOpen && (
         <div
           data-testid="elon-chat-dialog"
+          role="complementary"
+          aria-label="ELON operations assistant"
           className="fixed bottom-24 right-6 w-[360px] sm:w-[380px] bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col z-50 transition-all duration-200 animate-in fade-in slide-in-from-bottom-4"
         >
           {/* Blue Curved Header (Image 1 style) */}
@@ -128,7 +130,13 @@ export default function ElonChatWidget(): React.ReactElement {
           </div>
 
           {/* Messages Body */}
-          <div className="p-4 space-y-3 overflow-y-auto max-h-[300px] min-h-[220px] text-xs font-sans">
+          <div
+            role="log"
+            aria-live="polite"
+            aria-label="Conversation with ELON"
+            tabIndex={0}
+            className="p-4 space-y-3 overflow-y-auto max-h-[300px] min-h-[220px] text-xs font-sans"
+          >
             {messages.map((m) => (
               <div
                 key={m.id}
