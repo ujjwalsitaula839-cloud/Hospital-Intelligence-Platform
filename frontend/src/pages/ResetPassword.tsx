@@ -88,7 +88,7 @@ export default function ResetPassword(): React.ReactElement {
   // Missing token view
   if (!token) {
     return (
-      <div className="auth-page min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
+      <div role="main" className="auth-page min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
       <div className="fixed top-4 right-4 z-50">
         <ThemeToggle />
       </div>
@@ -122,7 +122,7 @@ export default function ResetPassword(): React.ReactElement {
   }
 
   return (
-    <div className="auth-page min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
+    <div role="main" className="auth-page min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
       <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 p-8 shadow-2xl">
         {/* Header Badge & Title */}
         <div className="mb-6">

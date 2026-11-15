@@ -28,6 +28,20 @@ npm ci
 npx vitest run src/test/HipaaBrowserSafeguards.test.tsx
 ```
 
+## One report for everything
+
+`run_checks.py` runs the HIPAA backend checks (in the container above) and the whole frontend Vitest
+suite, including the jest-axe accessibility tests, and writes one HTML report with three sections:
+HIPAA safeguards, Accessibility, and Other frontend tests. Docker Desktop must be running and `npm ci`
+must have been run in `frontend/`. From the repository root:
+
+```powershell
+python tests/security/run_checks.py
+```
+
+The report is written to `tests/security/results/test-report.html` (git-ignored). Use `--skip-backend`
+or `--skip-frontend` to run one half. The exit code is 0 when nothing failed; known gaps are expected.
+
 ## Reading the results
 
 | Status | Meaning |

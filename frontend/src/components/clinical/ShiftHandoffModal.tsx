@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { useDialog } from '../../hooks/useDialog';
 import type { Bed, IllnessSeverity, NurseHandoff, Observation, StaffMember } from '../../types';
 
 export interface ShiftHandoffModalProps {
@@ -109,6 +110,8 @@ export default function ShiftHandoffModal({
       }
     });
   }, [isOpen, initialBed, allBeds, currentUserId]);
+
+  const dialogRef = useDialog<HTMLDivElement>(isOpen && patientBeds.length > 0, onClose);
 
   if (!isOpen || patientBeds.length === 0) return null;
 
@@ -238,7 +241,7 @@ export default function ShiftHandoffModal({
       <div className="fixed inset-0 bg-black/80 backdrop-blur-xs" onClick={onClose} />
 
       {/* Modal Dialog Card: Bottom-sheet on mobile (<sm), centered dialog on tablet/desktop (sm+) */}
-      <div className="relative z-10 w-full sm:max-w-2xl bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-4 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-[92vh] sm:my-6 flex flex-col">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-handoff-title" tabIndex={-1} className="relative z-10 w-full sm:max-w-2xl bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-4 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-[92vh] sm:my-6 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
           <div>
@@ -250,11 +253,11 @@ export default function ShiftHandoffModal({
                 • The Joint Commission NPSG.02.05.01
               </span>
             </div>
-            <h3 className="text-base sm:text-lg font-bold text-white mt-0.5">
+            <h2 id="dlg-handoff-title" className="text-base sm:text-lg font-bold text-white mt-0.5">
               Bed {currentBed.bed_code} • Rm {currentBed.room_number}
-            </h3>
+            </h2>
           </div>
-          <button
+          <button aria-label="Close"
             type="button"
             onClick={onClose}
             className="text-zinc-400 hover:text-white text-lg sm:text-base p-2 sm:p-1 transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
@@ -405,6 +408,7 @@ export default function ShiftHandoffModal({
               )}
             </div>
             <select
+              aria-label="Oncoming nurse (relief)"
               value={currentForm.to_nurse_id}
               onChange={(e) => updateField('to_nurse_id', e.target.value ? Number(e.target.value) : '')}
               required
@@ -519,10 +523,10 @@ export default function ShiftHandoffModal({
 
           {/* Section 3: Situation & Clinical Course Summary */}
           <div className="space-y-1.5">
-            <label className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
+            <label htmlFor="handoff-patient-summary-clinical-course" className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
               Patient Summary & Clinical Course
             </label>
-            <textarea
+            <textarea id="handoff-patient-summary-clinical-course"
               rows={3}
               value={currentForm.patient_summary}
               onChange={(e) => updateField('patient_summary', e.target.value)}
@@ -533,10 +537,10 @@ export default function ShiftHandoffModal({
 
           {/* Section 4: Action Items & Shift To-Do Checklist */}
           <div className="space-y-1.5">
-            <label className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
+            <label htmlFor="handoff-action-items-shift-checklist" className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
               Action Items & Shift Checklist
             </label>
-            <textarea
+            <textarea id="handoff-action-items-shift-checklist"
               rows={2}
               value={currentForm.action_items}
               onChange={(e) => updateField('action_items', e.target.value)}
@@ -547,10 +551,10 @@ export default function ShiftHandoffModal({
 
           {/* Section 5: Contingency Planning */}
           <div className="space-y-1.5">
-            <label className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
+            <label htmlFor="handoff-contingency-planning-what-to-watch-for" className="block text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
               Contingency Planning (What to Watch For)
             </label>
-            <textarea
+            <textarea id="handoff-contingency-planning-what-to-watch-for"
               rows={2}
               value={currentForm.contingency_plan}
               onChange={(e) => updateField('contingency_plan', e.target.value)}

@@ -275,7 +275,7 @@ export default function EmsIntakeForm({
             <span className="text-sm font-bold text-red-700 dark:text-red-400">⚠</span>
             <span className="font-medium">{apiError}</span>
           </div>
-          <button
+          <button aria-label="Dismiss error"
             type="button"
             onClick={() => setApiError(null)}
             className="text-red-700 hover:text-red-900 dark:text-red-400 dark:hover:text-red-200 text-xs px-2 py-0.5 rounded-md hover:bg-red-100 dark:hover:bg-red-900/40 font-semibold"
