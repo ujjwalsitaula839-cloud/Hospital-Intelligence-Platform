@@ -1963,6 +1963,7 @@ export default function Clinical(): React.ReactElement {
                     onClick={() => {
                       setBedDeptFilter('ALL');
                       setBedStatusFilter('ALL');
+                      setOnlyMyPatients(false);
                     }}
                     className="border border-zinc-700 hover:border-zinc-500 text-white px-3 py-1 text-xs"
                   >

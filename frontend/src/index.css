@@ -1,6 +1,9 @@
 @import "tailwindcss";
 @config "../tailwind.config.ts";
 
+/* Drive Tailwind `dark:` variants from the app's .dark class (ThemeContext), not the OS setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-display: "Playfair Display", Georgia, serif;
   --font-body: Inter, system-ui, -apple-system, sans-serif;

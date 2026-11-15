@@ -12,6 +12,13 @@ export interface ShiftHandoffModalProps {
   onSuccess: () => Promise<void>;
 }
 
+const NOT_RECORDED = '—';
+
+/** Shows a recorded vital with its unit, or an explicit "not recorded" dash — never a made-up default. */
+function formatVital(value: number | null | undefined, unit: string): string {
+  return value == null ? NOT_RECORDED : `${value}${unit}`;
+}
+
 interface PatientFormState {
   to_nurse_id: number | '';
   illness_severity: IllnessSeverity;
@@ -82,7 +89,13 @@ export default function ShiftHandoffModal({
       try {
         const obsList = await api.getObservations(b.admission_id);
         if (obsList && obsList.length > 0) {
-          setVitalsMap((prev) => ({ ...prev, [b.admission_id!]: obsList[0] }));
+          // The API returns observations oldest-first; the handoff snapshot must show the most recent one.
+          const latestObs = obsList.reduce((latest, obs) =>
+            new Date(obs.observation_datetime).getTime() > new Date(latest.observation_datetime).getTime()
+              ? obs
+              : latest
+          );
+          setVitalsMap((prev) => ({ ...prev, [b.admission_id!]: latestObs }));
         }
       } catch {
         // Telemetry observation optional
@@ -462,43 +475,40 @@ export default function ShiftHandoffModal({
                       hour: '2-digit',
                       minute: '2-digit',
                     })}`
-                  : 'Bedside telemetry snapshot'}
+                  : 'No observations on file'}
               </span>
             </div>
-            <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 sm:gap-2 text-center text-xs">
-              <div className="p-1.5 bg-zinc-900 border border-zinc-800">
-                <div className="text-[9px] text-zinc-500 uppercase">Heart Rate</div>
-                <div className="font-bold text-white mt-0.5">
-                  {currentVitals?.heart_rate_bpm ? `${currentVitals.heart_rate_bpm} bpm` : '74 bpm'}
-                </div>
+            {currentVitals ? (
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 sm:gap-2 text-center text-xs">
+                {[
+                  { label: 'Heart Rate', value: formatVital(currentVitals.heart_rate_bpm, ' bpm') },
+                  {
+                    label: 'Blood Press.',
+                    value:
+                      currentVitals.systolic_bp != null && currentVitals.diastolic_bp != null
+                        ? `${currentVitals.systolic_bp}/${currentVitals.diastolic_bp}`
+                        : NOT_RECORDED,
+                  },
+                  { label: 'SpO2', value: formatVital(currentVitals.oxygen_saturation_pct, '%') },
+                  { label: 'Temp', value: formatVital(currentVitals.temperature_celsius, ' °C') },
+                  { label: 'Resp Rate', value: formatVital(currentVitals.respiratory_rate, '/m') },
+                ].map(({ label, value }) => (
+                  <div key={label} className="p-1.5 bg-zinc-900 border border-zinc-800">
+                    <div className="text-[9px] text-zinc-500 uppercase">{label}</div>
+                    <div
+                      className={`font-bold mt-0.5 ${value === NOT_RECORDED ? 'text-zinc-400' : 'text-white'}`}
+                      title={value === NOT_RECORDED ? 'Not recorded in the latest observation' : undefined}
+                    >
+                      {value}
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="p-1.5 bg-zinc-900 border border-zinc-800">
-                <div className="text-[9px] text-zinc-500 uppercase">Blood Press.</div>
-                <div className="font-bold text-white mt-0.5">
-                  {currentVitals?.systolic_bp && currentVitals?.diastolic_bp
-                    ? `${currentVitals.systolic_bp}/${currentVitals.diastolic_bp}`
-                    : '120/80'}
-                </div>
-              </div>
-              <div className="p-1.5 bg-zinc-900 border border-zinc-800">
-                <div className="text-[9px] text-zinc-500 uppercase">SpO2</div>
-                <div className="font-bold text-white mt-0.5">
-                  {currentVitals?.oxygen_saturation_pct ? `${currentVitals.oxygen_saturation_pct}%` : '98%'}
-                </div>
-              </div>
-              <div className="p-1.5 bg-zinc-900 border border-zinc-800">
-                <div className="text-[9px] text-zinc-500 uppercase">Temp</div>
-                <div className="font-bold text-white mt-0.5">
-                  {currentVitals?.temperature_celsius ? `${currentVitals.temperature_celsius} °C` : '37.0 °C'}
-                </div>
-              </div>
-              <div className="p-1.5 bg-zinc-900 border border-zinc-800">
-                <div className="text-[9px] text-zinc-500 uppercase">Resp Rate</div>
-                <div className="font-bold text-white mt-0.5">
-                  {currentVitals?.respiratory_rate ? `${currentVitals.respiratory_rate}/m` : '16/m'}
-                </div>
-              </div>
-            </div>
+            ) : (
+              <p className="p-2 bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
+                No vitals recorded for this stay yet. Chart vitals before handing over.
+              </p>
+            )}
             {currentBed.equipment && currentBed.equipment.length > 0 && (
               <div className="pt-1 flex items-center gap-1.5 text-[10px] text-zinc-400">
                 <span className="text-zinc-500">Active Devices:</span>
