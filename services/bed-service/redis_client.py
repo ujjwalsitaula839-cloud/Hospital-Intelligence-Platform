@@ -1,4 +1,5 @@
 # services/bed-service/redis_client.py
+from __future__ import annotations
 from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI
