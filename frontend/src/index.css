@@ -881,9 +881,16 @@ html:not(.dark) .ems-patient-card button {
   font-weight: 600 !important;
 }
 
-/* Visible keyboard focus on the sign-in and password pages (WCAG 2.4.7).
+/* Visible keyboard focus everywhere (WCAG 2.4.7 / 2.4.11).
    Unlayered, so it takes precedence over Tailwind's outline-none utilities. */
-.auth-page :is(a, button, input, select, textarea):focus-visible {
+:is(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
   outline: 2px solid #0284c7;
   outline-offset: 2px;
+}
+
+/* Dark theme: lift the muted and faint grey text to at least 4.5:1 on the zinc-900/950 surfaces
+   (WCAG 1.4.3). Light theme already remaps these classes above. */
+.dark {
+  --color-zinc-500: #9a9aa3;
+  --color-zinc-600: #92929c;
 }

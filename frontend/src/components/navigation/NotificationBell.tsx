@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Bell, CheckCheck, Trash2, X } from 'lucide-react';
 import { BED_STATUS_STYLES } from '../../lib/bedStatus';
+import { useAnnounce } from '../a11y/Announcer';
 import type { BedStatus } from '../../types';
 
 export interface AppNotification {
@@ -74,6 +75,23 @@ export default function NotificationBell({
   const hasUnread = unreadCount > 0;
   const badgeLabel = unreadCount > 9 ? '9+' : `${unreadCount}`;
   const buttonLabel = hasUnread ? `Notifications (${unreadCount} unread)` : 'Notifications';
+
+  // Announce newly arrived notifications to screen readers (not the backlog present on first render).
+  const announce = useAnnounce();
+  const seenIdsRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (seenIdsRef.current === null) {
+      seenIdsRef.current = new Set(notifications.map((n) => n.id));
+      return;
+    }
+    const fresh = notifications.filter((n) => !n.read && !seenIdsRef.current!.has(n.id));
+    notifications.forEach((n) => seenIdsRef.current!.add(n.id));
+    if (fresh.length === 1) {
+      announce(`New notification: ${fresh[0].title}. ${fresh[0].message}`);
+    } else if (fresh.length > 1) {
+      announce(`${fresh.length} new notifications. Latest: ${fresh[0].title}.`);
+    }
+  }, [notifications, announce]);
 
   // Toggle dropdown
   const handleToggle = () => {

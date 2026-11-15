@@ -1,5 +1,6 @@
 import React from 'react';
 import EmsIntakeForm from './EmsIntakeForm';
+import { useDialog } from '../../hooks/useDialog';
 import type { Admission, Patient } from '../../types';
 
 interface EmsCallIntakeModalProps {
@@ -17,6 +18,8 @@ export default function EmsCallIntakeModal({
   onClose,
   onSuccess,
 }: EmsCallIntakeModalProps): React.ReactElement | null {
+  const dialogRef = useDialog<HTMLDivElement>(isOpen, onClose);
+
   if (!isOpen) return null;
 
   return (
@@ -25,11 +28,11 @@ export default function EmsCallIntakeModal({
       <div
         className="fixed inset-0 bg-black/80 backdrop-blur-xs transition-opacity"
         onClick={onClose}
-        aria-label="Close EMS Call Intake Modal"
+        aria-hidden="true"
       />
 
       {/* Modal Dialog Card */}
-      <div className="relative z-10 w-full max-w-4xl bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-700/80 shadow-2xl rounded-2xl overflow-hidden max-h-[92vh] flex flex-col my-auto animate-fadeIn">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-ems-call-title" tabIndex={-1} className="relative z-10 w-full max-w-4xl bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-700/80 shadow-2xl rounded-2xl overflow-hidden max-h-[92vh] flex flex-col my-auto animate-fadeIn">
         {/* Top Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-900/90">
           <div className="flex items-center space-x-3">
@@ -37,7 +40,7 @@ export default function EmsCallIntakeModal({
               📞
             </span>
             <div>
-              <h2 className="text-sm font-bold text-slate-900 dark:text-white tracking-normal">
+              <h2 id="dlg-ems-call-title" className="text-sm font-bold text-slate-900 dark:text-white tracking-normal">
                 EMS Radio Patch & Inbound Call Intake
               </h2>
               <p className="text-xs text-slate-500 dark:text-zinc-400">

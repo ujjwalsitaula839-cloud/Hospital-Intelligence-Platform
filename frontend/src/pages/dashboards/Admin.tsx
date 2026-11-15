@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
 import { BED_STATUS_STYLES } from '../../lib/bedStatus';
+import { useDialog } from '../../hooks/useDialog';
 import type { Bed, BedStatus, Department, Role } from '../../types';
 import Clinical from './Clinical';
 import Housekeeping from './Housekeeping';
@@ -229,6 +230,12 @@ export default function Admin(): React.ReactElement {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isProvisionOpen, confirmDeactivateStaff]);
+
+  const provisionDialogRef = useDialog<HTMLDivElement>(isProvisionOpen, () => {
+    setIsProvisionOpen(false);
+    setProvisionResult(null);
+  });
+  const deactivateDialogRef = useDialog<HTMLDivElement>(!!confirmDeactivateStaff, () => setConfirmDeactivateStaff(null));
 
   const activeStaffCount = useMemo(() => staffList.filter((s) => s.is_active).length, [staffList]);
   const inactiveStaffCount = useMemo(() => staffList.filter((s) => !s.is_active).length, [staffList]);
@@ -640,7 +647,7 @@ export default function Admin(): React.ReactElement {
                   className="w-full bg-zinc-950 border border-zinc-800 px-3 py-2 text-xs text-white font-mono placeholder-zinc-600 focus:outline-none focus:border-zinc-500 pr-8"
                 />
                 {staffSearchQuery && (
-                  <button
+                  <button aria-label="Clear search"
                     type="button"
                     onClick={() => setStaffSearchQuery('')}
                     className="absolute right-2.5 top-2 text-xs font-mono text-zinc-400 hover:text-white"
@@ -671,6 +678,7 @@ export default function Admin(): React.ReactElement {
 
                 {/* Role Filter Dropdown */}
                 <select
+                  aria-label="Filter staff by role"
                   value={staffRoleFilter}
                   onChange={(e) => setStaffRoleFilter(e.target.value)}
                   className="bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-300 px-2.5 py-1.5 focus:outline-none focus:border-zinc-600"
@@ -689,7 +697,7 @@ export default function Admin(): React.ReactElement {
             {staffActionSuccess && (
               <div className="mb-4 p-3 bg-green-950/60 border border-green-700 text-green-300 font-mono text-xs flex justify-between items-center">
                 <span>✓ {staffActionSuccess}</span>
-                <button
+                <button aria-label="Dismiss message"
                   type="button"
                   onClick={() => setStaffActionSuccess(null)}
                   className="text-green-400 hover:text-white text-xs ml-3"
@@ -702,7 +710,7 @@ export default function Admin(): React.ReactElement {
             {staffActionError && (
               <div className="mb-4 p-3 bg-red-950/60 border border-red-700 text-red-300 font-mono text-xs flex justify-between items-center">
                 <span>⚠ {staffActionError}</span>
-                <button
+                <button aria-label="Dismiss message"
                   type="button"
                   onClick={() => setStaffActionError(null)}
                   className="text-red-400 hover:text-white text-xs ml-3"
@@ -898,6 +906,7 @@ export default function Admin(): React.ReactElement {
                             </div>
                           ) : (
                             <select
+                              aria-label={`Status for bed ${b.bed_code}`}
                               disabled={updatingBedId === b.bed_id}
                               value={b.status}
                               onChange={(e) => handleBedStatusChange(b, e.target.value as BedStatus)}
@@ -933,16 +942,16 @@ export default function Admin(): React.ReactElement {
           />
 
           {/* Right Panel */}
-          <div className="relative z-10 w-full max-w-md bg-zinc-900 border-l border-zinc-800 h-full p-6 overflow-y-auto flex flex-col justify-between shadow-2xl">
+          <div ref={provisionDialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-provision-title" tabIndex={-1} className="relative z-10 w-full max-w-md bg-zinc-900 border-l border-zinc-800 h-full p-6 overflow-y-auto flex flex-col justify-between shadow-2xl">
             <div>
               <div className="flex items-start justify-between pb-4 border-b border-zinc-800 mb-6">
                 <div>
                   <span className="text-xs font-mono uppercase tracking-wider text-zinc-400">
                     Administrator Gate
                   </span>
-                  <h3 className="text-xl font-bold font-mono text-white mt-1">Provision New Staff</h3>
+                  <h3 id="dlg-provision-title" className="text-xl font-bold font-mono text-white mt-1">Provision New Staff</h3>
                 </div>
-                <button
+                <button aria-label="Close"
                   type="button"
                   onClick={() => {
                     setIsProvisionOpen(false);
@@ -1012,10 +1021,10 @@ export default function Admin(): React.ReactElement {
                 /* FORM */
                 <form onSubmit={handleProvisionSubmit} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1">
+                    <label htmlFor="admin-full-name" className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1">
                       Full Name
                     </label>
-                    <input
+                    <input id="admin-full-name"
                       type="text"
                       required
                       value={fullName}
@@ -1026,10 +1035,10 @@ export default function Admin(): React.ReactElement {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1">
+                    <label htmlFor="admin-username" className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1">
                       Username
                     </label>
-                    <input
+                    <input id="admin-username"
                       type="text"
                       required
                       value={username}
@@ -1040,10 +1049,10 @@ export default function Admin(): React.ReactElement {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1">
+                    <label htmlFor="admin-hospital-email" className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1">
                       Hospital Email
                     </label>
-                    <input
+                    <input id="admin-hospital-email"
                       type="email"
                       required
                       value={email}
@@ -1054,10 +1063,10 @@ export default function Admin(): React.ReactElement {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1">
+                    <label htmlFor="admin-role" className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1">
                       Role
                     </label>
-                    <select
+                    <select id="admin-role"
                       value={role}
                       onChange={(e) => setRole(e.target.value as Role)}
                       className="w-full bg-zinc-950 border border-zinc-800 px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-zinc-500"
@@ -1071,10 +1080,10 @@ export default function Admin(): React.ReactElement {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1">
+                    <label htmlFor="admin-department" className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-1">
                       Department
                     </label>
-                    <select
+                    <select id="admin-department"
                       value={department}
                       onChange={(e) => setDepartment(e.target.value as Department)}
                       className="w-full bg-zinc-950 border border-zinc-800 px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-zinc-500"
@@ -1118,15 +1127,15 @@ export default function Admin(): React.ReactElement {
             onClick={() => setConfirmDeactivateStaff(null)}
           />
 
-          <div className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800 p-6 shadow-2xl font-mono">
+          <div ref={deactivateDialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-deactivate-title" tabIndex={-1} className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800 p-6 shadow-2xl font-mono">
             <div className="flex items-start justify-between pb-3 border-b border-zinc-800 mb-4">
               <div>
                 <span className="text-[10px] uppercase tracking-wider text-red-400 font-bold">
                   Administrative Action
                 </span>
-                <h3 className="text-lg font-bold text-white mt-0.5">Deactivate Staff Account</h3>
+                <h3 id="dlg-deactivate-title" className="text-lg font-bold text-white mt-0.5">Deactivate Staff Account</h3>
               </div>
-              <button
+              <button aria-label="Close"
                 type="button"
                 onClick={() => setConfirmDeactivateStaff(null)}
                 className="text-zinc-500 hover:text-white text-xs border border-zinc-800 p-1"

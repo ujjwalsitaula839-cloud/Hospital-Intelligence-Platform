@@ -26,6 +26,7 @@ import ShiftHandoffModal from '../../components/clinical/ShiftHandoffModal';
 import ThemeToggle from '../../components/navigation/ThemeToggle';
 import NotificationBell, { type AppNotification } from '../../components/navigation/NotificationBell';
 import ElonChatWidget from '../../components/elon/ElonChatWidget';
+import { useDialog } from '../../hooks/useDialog';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -526,6 +527,17 @@ export default function Clinical(): React.ReactElement {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // Accessible dialog behaviour (focus in, focus trap, Escape, focus return) for the inline modals
+  const emsHoldDialogRef = useDialog<HTMLDivElement>(!!assigningEmsItem, () => setAssigningEmsItem(null));
+  const admitDialogRef = useDialog<HTMLDivElement>(!!admitBed, () => setAdmitBed(null));
+  const transferDialogRef = useDialog<HTMLDivElement>(!!transferFromBed, () => setTransferFromBed(null));
+  const dischargeDialogRef = useDialog<HTMLDivElement>(!!dischargeBed, () => setDischargeBed(null));
+  const registerDialogRef = useDialog<HTMLDivElement>(isRegisterOpen, () => setIsRegisterOpen(false));
+  const editPatientDialogRef = useDialog<HTMLDivElement>(!!editingPatient, () => setEditingPatient(null));
+  const chartDialogRef = useDialog<HTMLDivElement>(!!chartPatient, () => setChartPatient(null));
+  const vitalsDialogRef = useDialog<HTMLDivElement>(chartingAdmissionId !== null, () => setChartingAdmissionId(null));
+  const allocateDialogRef = useDialog<HTMLDivElement>(!!allocatingEquipment, () => setAllocatingEquipment(null));
 
   // Helper to compile triage info payload for bed recommendation
   const buildEmsRecommendationPayload = useCallback(async (item: NonNullable<typeof assigningEmsItem>) => {
@@ -2406,8 +2418,8 @@ export default function Clinical(): React.ReactElement {
 
                   <form onSubmit={handleSubmitVitals} className="space-y-4 font-mono text-xs">
                     <div>
-                      <label className="block uppercase text-zinc-400 mb-1">Heart Rate (bpm)</label>
-                      <input
+                      <label htmlFor="clinical-heart-rate-bpm" className="block uppercase text-zinc-400 mb-1">Heart Rate (bpm)</label>
+                      <input id="clinical-heart-rate-bpm"
                         type="number"
                         min={1}
                         max={299}
@@ -2425,8 +2437,8 @@ export default function Clinical(): React.ReactElement {
 
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block uppercase text-zinc-400 mb-1">Systolic BP</label>
-                        <input
+                        <label htmlFor="clinical-systolic-bp" className="block uppercase text-zinc-400 mb-1">Systolic BP</label>
+                        <input id="clinical-systolic-bp"
                           type="number"
                           min={1}
                           max={349}
@@ -2442,8 +2454,8 @@ export default function Clinical(): React.ReactElement {
                         />
                       </div>
                       <div>
-                        <label className="block uppercase text-zinc-400 mb-1">Diastolic BP</label>
-                        <input
+                        <label htmlFor="clinical-diastolic-bp" className="block uppercase text-zinc-400 mb-1">Diastolic BP</label>
+                        <input id="clinical-diastolic-bp"
                           type="number"
                           min={1}
                           max={249}
@@ -2461,8 +2473,8 @@ export default function Clinical(): React.ReactElement {
                     </div>
 
                     <div>
-                      <label className="block uppercase text-zinc-400 mb-1">Oxygen Saturation (%)</label>
-                      <input
+                      <label htmlFor="clinical-oxygen-saturation" className="block uppercase text-zinc-400 mb-1">Oxygen Saturation (%)</label>
+                      <input id="clinical-oxygen-saturation"
                         type="number"
                         step="0.1"
                         min={0}
@@ -2480,8 +2492,8 @@ export default function Clinical(): React.ReactElement {
                     </div>
 
                     <div>
-                      <label className="block uppercase text-zinc-400 mb-1">Temperature (°C)</label>
-                      <input
+                      <label htmlFor="clinical-temperature-c" className="block uppercase text-zinc-400 mb-1">Temperature (°C)</label>
+                      <input id="clinical-temperature-c"
                         type="number"
                         step="0.1"
                         min={25}
@@ -2499,8 +2511,8 @@ export default function Clinical(): React.ReactElement {
                     </div>
 
                     <div>
-                      <label className="block uppercase text-zinc-400 mb-1">Respiratory Rate (/min)</label>
-                      <input
+                      <label htmlFor="clinical-respiratory-rate-min" className="block uppercase text-zinc-400 mb-1">Respiratory Rate (/min)</label>
+                      <input id="clinical-respiratory-rate-min"
                         type="number"
                         min={0}
                         max={100}
@@ -2517,8 +2529,8 @@ export default function Clinical(): React.ReactElement {
                     </div>
 
                     <div>
-                      <label className="block uppercase text-zinc-400 mb-1">Clinical Commentary / Notes</label>
-                      <textarea
+                      <label htmlFor="clinical-clinical-commentary-notes" className="block uppercase text-zinc-400 mb-1">Clinical Commentary / Notes</label>
+                      <textarea id="clinical-clinical-commentary-notes"
                         rows={2}
                         value={vitalsForm.notes ?? ''}
                         onChange={(e) => setVitalsForm((p) => ({ ...p, notes: e.target.value }))}
@@ -2654,6 +2666,7 @@ export default function Clinical(): React.ReactElement {
               <div className="flex items-center space-x-2">
                 <span className="text-zinc-400 uppercase">Device Type:</span>
                 <select
+                  aria-label="Filter equipment by device type"
                   value={eqTypeFilter}
                   onChange={(e) => setEqTypeFilter(e.target.value)}
                   className="bg-zinc-900 border border-zinc-800 text-white px-3 py-1.5 focus:outline-none focus:border-zinc-500"
@@ -2669,6 +2682,7 @@ export default function Clinical(): React.ReactElement {
               <div className="flex items-center space-x-2">
                 <span className="text-zinc-400 uppercase">Status:</span>
                 <select
+                  aria-label="Filter equipment by status"
                   value={eqStatusFilter}
                   onChange={(e) => setEqStatusFilter(e.target.value)}
                   className="bg-zinc-900 border border-zinc-800 text-white px-3 py-1.5 focus:outline-none focus:border-zinc-500"
@@ -2781,6 +2795,7 @@ export default function Clinical(): React.ReactElement {
         {/* ================================================================= */}
         {activeTab === 'ems' && (
           <div className="space-y-8 animate-fadeIn">
+            <h1 className="sr-only">EMS Inbound Intake</h1>
             {/* Embedded Form Component */}
             <EmsIntakeForm onSuccess={handleEmsSuccess} />
 
@@ -3058,14 +3073,14 @@ export default function Clinical(): React.ReactElement {
             className="fixed inset-0 bg-black/75 backdrop-blur-xs"
             onClick={() => setAssigningEmsItem(null)}
           />
-          <div className="relative z-10 w-full max-w-xl max-h-[90vh] bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 shadow-2xl rounded-xl flex flex-col overflow-hidden">
+          <div ref={emsHoldDialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-ems-hold-title" tabIndex={-1} className="relative z-10 w-full max-w-xl max-h-[90vh] bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 shadow-2xl rounded-xl flex flex-col overflow-hidden">
             {/* 1. Header (Fixed at top) */}
             <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-zinc-800 shrink-0 flex items-center justify-between bg-white dark:bg-zinc-900">
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
                   Ambulance Pre-Arrival Dispatch
                 </span>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                <h3 id="dlg-ems-hold-title" className="text-lg font-bold text-slate-900 dark:text-white">
                   Hold Bed for Inbound Patient
                 </h3>
               </div>
@@ -3404,18 +3419,18 @@ export default function Clinical(): React.ReactElement {
       {admitBed && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="fixed inset-0 bg-black/70 backdrop-blur-xs" onClick={() => setAdmitBed(null)} />
-          <div className="relative z-10 w-full max-w-md bg-zinc-900 border-l border-zinc-800 h-full p-6 overflow-y-auto flex flex-col justify-between shadow-2xl">
+          <div ref={admitDialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-admit-title" tabIndex={-1} className="relative z-10 w-full max-w-md bg-zinc-900 border-l border-zinc-800 h-full p-6 overflow-y-auto flex flex-col justify-between shadow-2xl">
             <div>
               <div className="flex items-start justify-between pb-4 border-b border-zinc-800 mb-6">
                 <div>
                   <div className="text-xs font-mono uppercase tracking-wider text-zinc-400">
                     Intake Bed • Room {admitBed.room_number}
                   </div>
-                  <h2 className="text-2xl font-bold font-mono text-white mt-1">
+                  <h2 id="dlg-admit-title" className="text-2xl font-bold font-mono text-white mt-1">
                     {admitBed.bed_code}
                   </h2>
                 </div>
-                <button
+                <button aria-label="Close"
                   type="button"
                   onClick={() => setAdmitBed(null)}
                   className="text-zinc-400 hover:text-white p-1 text-sm font-mono border border-zinc-800 hover:border-zinc-700"
@@ -3449,10 +3464,10 @@ export default function Clinical(): React.ReactElement {
 
                   {/* Dropdown Menu for Quick & Easy Selection */}
                   <div>
-                    <label className="block text-[10px] font-mono uppercase tracking-wider text-zinc-400 mb-1">
+                    <label htmlFor="clinical-patient-dropdown-menu" className="block text-[10px] font-mono uppercase tracking-wider text-zinc-400 mb-1">
                       Patient Dropdown Menu
                     </label>
-                    <select
+                    <select id="clinical-patient-dropdown-menu"
                       value={selectedAdmitPatient?.patient_id ?? ''}
                       onChange={(e) => {
                         const val = e.target.value;
@@ -3499,7 +3514,7 @@ export default function Clinical(): React.ReactElement {
                         className="w-full bg-zinc-950 border border-zinc-800 px-3 py-2 text-xs text-white font-mono placeholder-zinc-600 focus:outline-none focus:border-zinc-500 pr-8"
                       />
                       {admitSearchQuery && (
-                        <button
+                        <button aria-label="Clear search"
                           type="button"
                           onClick={() => setAdmitSearchQuery('')}
                           className="absolute right-2.5 top-2 text-xs font-mono text-zinc-400 hover:text-white"
@@ -3589,10 +3604,10 @@ export default function Clinical(): React.ReactElement {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-2">
+                  <label htmlFor="clinical-3-primary-clinical-diagnosis" className="block text-xs font-mono uppercase tracking-wider text-zinc-300 mb-2">
                     3. Primary Clinical Diagnosis
                   </label>
-                  <input
+                  <input id="clinical-3-primary-clinical-diagnosis"
                     type="text"
                     value={admitDiagnosis}
                     onChange={(e) => setAdmitDiagnosis(e.target.value)}
@@ -3651,13 +3666,13 @@ export default function Clinical(): React.ReactElement {
       {transferFromBed && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
           <div className="fixed inset-0 bg-black/75 backdrop-blur-xs" onClick={() => setTransferFromBed(null)} />
-          <div className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
+          <div ref={transferDialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-transfer-title" tabIndex={-1} className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Intra-Hospital Transfer</span>
-                <h3 className="text-xl font-bold font-mono text-white">Transfer Patient Bed</h3>
+                <h3 id="dlg-transfer-title" className="text-xl font-bold font-mono text-white">Transfer Patient Bed</h3>
               </div>
-              <button
+              <button aria-label="Close"
                 type="button"
                 onClick={() => setTransferFromBed(null)}
                 className="text-zinc-400 hover:text-white text-sm font-mono"
@@ -3687,6 +3702,7 @@ export default function Clinical(): React.ReactElement {
                   </p>
                 ) : (
                   <select
+                    aria-label="Destination bed"
                     value={transferToBedCode}
                     onChange={(e) => setTransferToBedCode(e.target.value)}
                     required
@@ -3726,13 +3742,13 @@ export default function Clinical(): React.ReactElement {
       {dischargeBed && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
           <div className="fixed inset-0 bg-black/75 backdrop-blur-xs" onClick={() => setDischargeBed(null)} />
-          <div className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
+          <div ref={dischargeDialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-discharge-title" tabIndex={-1} className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-red-400">Discharge Verification</span>
-                <h3 className="text-xl font-bold font-mono text-white">Confirm Patient Discharge</h3>
+                <h3 id="dlg-discharge-title" className="text-xl font-bold font-mono text-white">Confirm Patient Discharge</h3>
               </div>
-              <button
+              <button aria-label="Close"
                 type="button"
                 onClick={() => setDischargeBed(null)}
                 className="text-zinc-400 hover:text-white text-sm font-mono"
@@ -3786,13 +3802,13 @@ export default function Clinical(): React.ReactElement {
       {isRegisterOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
           <div className="fixed inset-0 bg-black/75 backdrop-blur-xs" onClick={() => setIsRegisterOpen(false)} />
-          <div className="relative z-10 w-full sm:max-w-lg bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
+          <div ref={registerDialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-register-title" tabIndex={-1} className="relative z-10 w-full sm:max-w-lg bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Master Patient Index</span>
-                <h3 className="text-xl font-bold font-mono text-white">Register Walk-In Patient</h3>
+                <h2 id="dlg-register-title" className="text-xl font-bold font-mono text-white">Register Walk-In Patient</h2>
               </div>
-              <button
+              <button aria-label="Close"
                 type="button"
                 onClick={() => setIsRegisterOpen(false)}
                 className="text-zinc-400 hover:text-white text-sm font-mono"
@@ -3810,8 +3826,8 @@ export default function Clinical(): React.ReactElement {
             <form onSubmit={handleRegisterPatient} className="space-y-4 font-mono text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">First Name *</label>
-                  <input
+                  <label htmlFor="clinical-first-name" className="block uppercase text-zinc-400 mb-1">First Name *</label>
+                  <input id="clinical-first-name"
                     type="text"
                     required
                     value={newPatient.first_name}
@@ -3821,8 +3837,8 @@ export default function Clinical(): React.ReactElement {
                   />
                 </div>
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">Last Name *</label>
-                  <input
+                  <label htmlFor="clinical-last-name" className="block uppercase text-zinc-400 mb-1">Last Name *</label>
+                  <input id="clinical-last-name"
                     type="text"
                     required
                     value={newPatient.last_name}
@@ -3835,8 +3851,8 @@ export default function Clinical(): React.ReactElement {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">Date of Birth *</label>
-                  <input
+                  <label htmlFor="clinical-date-of-birth" className="block uppercase text-zinc-400 mb-1">Date of Birth *</label>
+                  <input id="clinical-date-of-birth"
                     type="date"
                     required
                     value={newPatient.date_of_birth}
@@ -3845,8 +3861,8 @@ export default function Clinical(): React.ReactElement {
                   />
                 </div>
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">Gender *</label>
-                  <select
+                  <label htmlFor="clinical-gender" className="block uppercase text-zinc-400 mb-1">Gender *</label>
+                  <select id="clinical-gender"
                     value={newPatient.gender}
                     onChange={(e) =>
                       setNewPatient((p) => ({ ...p, gender: e.target.value as 'MALE' | 'FEMALE' | 'OTHER' }))
@@ -3861,8 +3877,8 @@ export default function Clinical(): React.ReactElement {
               </div>
 
               <div>
-                <label className="block uppercase text-zinc-400 mb-1">Contact Phone</label>
-                <input
+                <label htmlFor="clinical-contact-phone" className="block uppercase text-zinc-400 mb-1">Contact Phone</label>
+                <input id="clinical-contact-phone"
                   type="text"
                   value={newPatient.phone ?? ''}
                   onChange={(e) => setNewPatient((p) => ({ ...p, phone: e.target.value }))}
@@ -3872,8 +3888,8 @@ export default function Clinical(): React.ReactElement {
               </div>
 
               <div>
-                <label className="block uppercase text-zinc-400 mb-1">Mailing Address</label>
-                <input
+                <label htmlFor="clinical-mailing-address" className="block uppercase text-zinc-400 mb-1">Mailing Address</label>
+                <input id="clinical-mailing-address"
                   type="text"
                   value={newPatient.address ?? ''}
                   onChange={(e) => setNewPatient((p) => ({ ...p, address: e.target.value }))}
@@ -3902,13 +3918,13 @@ export default function Clinical(): React.ReactElement {
       {editingPatient && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
           <div className="fixed inset-0 bg-black/75 backdrop-blur-xs" onClick={() => setEditingPatient(null)} />
-          <div className="relative z-10 w-full sm:max-w-lg bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
+          <div ref={editPatientDialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-edit-patient-title" tabIndex={-1} className="relative z-10 w-full sm:max-w-lg bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Master Patient Index • Edit Record</span>
-                <h3 className="text-xl font-bold font-mono text-white">Patient #{editingPatient.patient_id}</h3>
+                <h2 id="dlg-edit-patient-title" className="text-xl font-bold font-mono text-white">Patient #{editingPatient.patient_id}</h2>
               </div>
-              <button
+              <button aria-label="Close"
                 type="button"
                 onClick={() => setEditingPatient(null)}
                 className="text-zinc-400 hover:text-white text-sm font-mono"
@@ -3926,8 +3942,8 @@ export default function Clinical(): React.ReactElement {
             <form onSubmit={handleSavePatientEdit} className="space-y-4 font-mono text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">First Name *</label>
-                  <input
+                  <label htmlFor="clinical-first-name-2" className="block uppercase text-zinc-400 mb-1">First Name *</label>
+                  <input id="clinical-first-name-2"
                     type="text"
                     required
                     value={editPatientForm.first_name ?? ''}
@@ -3936,8 +3952,8 @@ export default function Clinical(): React.ReactElement {
                   />
                 </div>
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">Last Name *</label>
-                  <input
+                  <label htmlFor="clinical-last-name-2" className="block uppercase text-zinc-400 mb-1">Last Name *</label>
+                  <input id="clinical-last-name-2"
                     type="text"
                     required
                     value={editPatientForm.last_name ?? ''}
@@ -3949,8 +3965,8 @@ export default function Clinical(): React.ReactElement {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">Date of Birth *</label>
-                  <input
+                  <label htmlFor="clinical-date-of-birth-2" className="block uppercase text-zinc-400 mb-1">Date of Birth *</label>
+                  <input id="clinical-date-of-birth-2"
                     type="date"
                     required
                     value={editPatientForm.date_of_birth ?? ''}
@@ -3959,8 +3975,8 @@ export default function Clinical(): React.ReactElement {
                   />
                 </div>
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">Gender *</label>
-                  <select
+                  <label htmlFor="clinical-gender-2" className="block uppercase text-zinc-400 mb-1">Gender *</label>
+                  <select id="clinical-gender-2"
                     value={editPatientForm.gender ?? 'MALE'}
                     onChange={(e) =>
                       setEditPatientForm((p) => ({ ...p, gender: e.target.value as 'MALE' | 'FEMALE' | 'OTHER' }))
@@ -3975,8 +3991,8 @@ export default function Clinical(): React.ReactElement {
               </div>
 
               <div>
-                <label className="block uppercase text-zinc-400 mb-1">Contact Phone Number</label>
-                <input
+                <label htmlFor="clinical-contact-phone-number" className="block uppercase text-zinc-400 mb-1">Contact Phone Number</label>
+                <input id="clinical-contact-phone-number"
                   type="text"
                   value={editPatientForm.phone ?? ''}
                   onChange={(e) => setEditPatientForm((p) => ({ ...p, phone: e.target.value }))}
@@ -3986,8 +4002,8 @@ export default function Clinical(): React.ReactElement {
               </div>
 
               <div>
-                <label className="block uppercase text-zinc-400 mb-1">Residential Address</label>
-                <input
+                <label htmlFor="clinical-residential-address" className="block uppercase text-zinc-400 mb-1">Residential Address</label>
+                <input id="clinical-residential-address"
                   type="text"
                   value={editPatientForm.address ?? ''}
                   onChange={(e) => setEditPatientForm((p) => ({ ...p, address: e.target.value }))}
@@ -4036,18 +4052,18 @@ export default function Clinical(): React.ReactElement {
       {chartPatient && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="fixed inset-0 bg-black/70 backdrop-blur-xs" onClick={() => setChartPatient(null)} />
-          <div className="relative z-10 w-full max-w-lg bg-zinc-900 border-l border-zinc-800 h-full p-6 overflow-y-auto flex flex-col justify-between shadow-2xl">
+          <div ref={chartDialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-chart-title" tabIndex={-1} className="relative z-10 w-full max-w-lg bg-zinc-900 border-l border-zinc-800 h-full p-6 overflow-y-auto flex flex-col justify-between shadow-2xl">
             <div>
               <div className="flex items-start justify-between pb-4 border-b border-zinc-800 mb-6">
                 <div>
                   <div className="text-xs font-mono uppercase tracking-wider text-zinc-400">
                     Patient Medical Chart • MRN #{chartPatient.patient_id}
                   </div>
-                  <h2 className="text-2xl font-bold font-mono text-white mt-1">
+                  <h2 id="dlg-chart-title" className="text-2xl font-bold font-mono text-white mt-1">
                     {chartPatient.first_name} {chartPatient.last_name}
                   </h2>
                 </div>
-                <button
+                <button aria-label="Close"
                   type="button"
                   onClick={() => setChartPatient(null)}
                   className="text-zinc-400 hover:text-white p-1 text-sm font-mono border border-zinc-800 hover:border-zinc-700"
@@ -4234,6 +4250,7 @@ export default function Clinical(): React.ReactElement {
                             {isActive && (
                               <div className="flex items-center gap-1.5 pt-1">
                                 <select
+                                  aria-label="Oncoming nurse for this admission"
                                   value={selectedHandoverNurse[adm.admission_id] || ''}
                                   onChange={(e) =>
                                     setSelectedHandoverNurse((prev) => ({
@@ -4328,13 +4345,13 @@ export default function Clinical(): React.ReactElement {
             className="fixed inset-0 bg-black/75 backdrop-blur-xs"
             onClick={() => setChartingAdmissionId(null)}
           />
-          <div className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
+          <div ref={vitalsDialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-vitals-title" tabIndex={-1} className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Bed {chartingBedCode}</span>
-                <h3 className="text-xl font-bold font-mono text-white">Chart Patient Vitals</h3>
+                <h3 id="dlg-vitals-title" className="text-xl font-bold font-mono text-white">Chart Patient Vitals</h3>
               </div>
-              <button
+              <button aria-label="Close"
                 type="button"
                 onClick={() => setChartingAdmissionId(null)}
                 className="text-zinc-400 hover:text-white text-sm font-mono"
@@ -4352,8 +4369,8 @@ export default function Clinical(): React.ReactElement {
             <form onSubmit={handleSubmitVitals} className="space-y-4 font-mono text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">Heart Rate (bpm)</label>
-                  <input
+                  <label htmlFor="clinical-heart-rate-bpm-2" className="block uppercase text-zinc-400 mb-1">Heart Rate (bpm)</label>
+                  <input id="clinical-heart-rate-bpm-2"
                     type="number"
                     min={1}
                     max={299}
@@ -4369,8 +4386,8 @@ export default function Clinical(): React.ReactElement {
                   />
                 </div>
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">SpO2 (%)</label>
-                  <input
+                  <label htmlFor="clinical-spo2" className="block uppercase text-zinc-400 mb-1">SpO2 (%)</label>
+                  <input id="clinical-spo2"
                     type="number"
                     step="0.1"
                     min={0}
@@ -4390,8 +4407,8 @@ export default function Clinical(): React.ReactElement {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">Systolic BP</label>
-                  <input
+                  <label htmlFor="clinical-systolic-bp-2" className="block uppercase text-zinc-400 mb-1">Systolic BP</label>
+                  <input id="clinical-systolic-bp-2"
                     type="number"
                     min={1}
                     max={349}
@@ -4407,8 +4424,8 @@ export default function Clinical(): React.ReactElement {
                   />
                 </div>
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">Diastolic BP</label>
-                  <input
+                  <label htmlFor="clinical-diastolic-bp-2" className="block uppercase text-zinc-400 mb-1">Diastolic BP</label>
+                  <input id="clinical-diastolic-bp-2"
                     type="number"
                     min={1}
                     max={249}
@@ -4427,8 +4444,8 @@ export default function Clinical(): React.ReactElement {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">Temp (°C)</label>
-                  <input
+                  <label htmlFor="clinical-temp-c" className="block uppercase text-zinc-400 mb-1">Temp (°C)</label>
+                  <input id="clinical-temp-c"
                     type="number"
                     step="0.1"
                     min={25}
@@ -4445,8 +4462,8 @@ export default function Clinical(): React.ReactElement {
                   />
                 </div>
                 <div>
-                  <label className="block uppercase text-zinc-400 mb-1">RR (/min)</label>
-                  <input
+                  <label htmlFor="clinical-rr-min" className="block uppercase text-zinc-400 mb-1">RR (/min)</label>
+                  <input id="clinical-rr-min"
                     type="number"
                     min={0}
                     max={100}
@@ -4464,8 +4481,8 @@ export default function Clinical(): React.ReactElement {
               </div>
 
               <div>
-                <label className="block uppercase text-zinc-400 mb-1">Clinical Notes</label>
-                <textarea
+                <label htmlFor="clinical-clinical-notes" className="block uppercase text-zinc-400 mb-1">Clinical Notes</label>
+                <textarea id="clinical-clinical-notes"
                   rows={2}
                   value={vitalsForm.notes ?? ''}
                   onChange={(e) => setVitalsForm((p) => ({ ...p, notes: e.target.value }))}
@@ -4497,13 +4514,13 @@ export default function Clinical(): React.ReactElement {
             className="fixed inset-0 bg-black/75 backdrop-blur-xs"
             onClick={() => setAllocatingEquipment(null)}
           />
-          <div className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
+          <div ref={allocateDialogRef} role="dialog" aria-modal="true" aria-labelledby="dlg-allocate-title" tabIndex={-1} className="relative z-10 w-full sm:max-w-md bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-5 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-none overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-5">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Device Checkout</span>
-                <h3 className="text-xl font-bold font-mono text-white">Allocate Medical Equipment</h3>
+                <h3 id="dlg-allocate-title" className="text-xl font-bold font-mono text-white">Allocate Medical Equipment</h3>
               </div>
-              <button
+              <button aria-label="Close"
                 type="button"
                 onClick={() => setAllocatingEquipment(null)}
                 className="text-zinc-400 hover:text-white text-sm font-mono"
@@ -4533,6 +4550,7 @@ export default function Clinical(): React.ReactElement {
                   </p>
                 ) : (
                   <select
+                    aria-label="Destination bed for this equipment"
                     value={targetBedForEquip}
                     onChange={(e) => {
                       setTargetBedForEquip(e.target.value);

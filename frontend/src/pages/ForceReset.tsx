@@ -69,7 +69,7 @@ export default function ForceReset(): React.ReactElement {
   };
 
   return (
-    <div className="auth-page min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
+    <div role="main" className="auth-page min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100">
       <div className="fixed top-4 right-4 z-50">
         <ThemeToggle />
       </div>

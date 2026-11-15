@@ -175,7 +175,7 @@ export default function Login(): React.ReactElement {
 
   return (
     <div
-      className="auth-page min-h-screen flex items-center justify-center p-4 text-zinc-100 relative bg-zinc-950"
+      role="main" className="auth-page min-h-screen flex items-center justify-center p-4 text-zinc-100 relative bg-zinc-950"
       style={{
         backgroundImage: `linear-gradient(to bottom, rgba(9, 9, 11, 0.78), rgba(9, 9, 11, 0.90)), url('/hospital_login_bg.jpg')`,
         backgroundSize: 'cover',
@@ -217,7 +217,7 @@ export default function Login(): React.ReactElement {
         {saveSuccessMsg && (
           <div className="mb-4 p-3 border border-green-700 bg-green-950/80 text-green-300 text-xs font-mono flex items-center justify-between">
             <span>{saveSuccessMsg}</span>
-            <button
+            <button aria-label="Dismiss message"
               type="button"
               onClick={() => setSaveSuccessMsg(null)}
               className="text-green-400 hover:text-white ml-2"
