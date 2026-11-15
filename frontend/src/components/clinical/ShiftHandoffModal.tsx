@@ -220,16 +220,16 @@ export default function ShiftHandoffModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto font-mono text-xs">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto font-mono text-xs">
       {/* Backdrop */}
       <div className="fixed inset-0 bg-black/80 backdrop-blur-xs" onClick={onClose} />
 
-      {/* Modal Dialog Card */}
-      <div className="relative z-10 w-full max-w-2xl bg-zinc-900 border border-zinc-800 p-6 shadow-2xl my-6 max-h-[92vh] flex flex-col">
+      {/* Modal Dialog Card: Bottom-sheet on mobile (<sm), centered dialog on tablet/desktop (sm+) */}
+      <div className="relative z-10 w-full sm:max-w-2xl bg-zinc-900 border-t sm:border border-zinc-800 rounded-t-2xl sm:rounded-none p-4 sm:p-6 shadow-2xl max-h-[90dvh] sm:max-h-[92vh] sm:my-6 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
               <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">
                 I-PASS Clinical Shift Handoff
               </span>
@@ -237,14 +237,14 @@ export default function ShiftHandoffModal({
                 • The Joint Commission NPSG.02.05.01
               </span>
             </div>
-            <h3 className="text-lg font-bold text-white mt-0.5">
+            <h3 className="text-base sm:text-lg font-bold text-white mt-0.5">
               Bed {currentBed.bed_code} • Rm {currentBed.room_number}
             </h3>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="text-zinc-400 hover:text-white text-base px-2 py-1 transition-colors"
+            className="text-zinc-400 hover:text-white text-lg sm:text-base p-2 sm:p-1 transition-colors min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center"
           >
             ✕
           </button>
@@ -257,7 +257,7 @@ export default function ShiftHandoffModal({
               <span>Assigned Patients for Handoff ({patientBeds.length})</span>
               <span className="text-zinc-400 text-[9px]">Select tab to review & edit each patient</span>
             </div>
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <div className="flex gap-2 overflow-x-auto pb-1.5 touch-pan-x scroll-smooth">
               {patientBeds.map((pb, idx) => {
                 const isTabActive = idx === activeIndex;
                 const hasNurse = pb.admission_id && forms[pb.admission_id]?.to_nurse_id !== '';
@@ -266,7 +266,7 @@ export default function ShiftHandoffModal({
                     key={pb.bed_id}
                     type="button"
                     onClick={() => setActiveIndex(idx)}
-                    className={`px-3 py-1.5 border text-xs text-left transition-colors flex items-center gap-2 shrink-0 ${
+                    className={`px-3 py-2 sm:py-1.5 border text-xs text-left transition-colors flex items-center gap-2 shrink-0 min-h-[40px] sm:min-h-0 ${
                       isTabActive
                         ? 'bg-blue-600/20 border-blue-500 text-blue-200 font-bold'
                         : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
@@ -292,7 +292,7 @@ export default function ShiftHandoffModal({
           {error && <div className="p-3 bg-red-950/80 border border-red-800 text-red-200 text-xs">{error}</div>}
 
           {/* Demographic & Acuity Banner */}
-          <div className="p-3 bg-zinc-950 border border-zinc-800 grid grid-cols-2 gap-2 text-xs">
+          <div className="p-3 bg-zinc-950 border border-zinc-800 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
             <div>
               <span className="text-zinc-500">Patient: </span>
               <span className="font-bold text-white">
@@ -375,7 +375,7 @@ export default function ShiftHandoffModal({
 
           {/* Oncoming Nurse Selector */}
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-1">
               <label className="text-zinc-400 uppercase tracking-wider text-[11px] font-semibold">
                 Select Oncoming Nurse (Relief)
               </label>
@@ -395,7 +395,7 @@ export default function ShiftHandoffModal({
               value={currentForm.to_nurse_id}
               onChange={(e) => updateField('to_nurse_id', e.target.value ? Number(e.target.value) : '')}
               required
-              className="w-full bg-zinc-950 border border-zinc-700 p-2.5 text-zinc-100 text-xs focus:outline-none focus:border-blue-500 font-mono"
+              className="w-full bg-zinc-950 border border-zinc-700 p-2.5 text-zinc-100 text-xs focus:outline-none focus:border-blue-500 font-mono min-h-[44px] sm:min-h-0"
             >
               <option value="">Select Oncoming Nurse...</option>
               {nursesList.map((n) => (
@@ -422,7 +422,7 @@ export default function ShiftHandoffModal({
                     type="button"
                     key={severity}
                     onClick={() => updateField('illness_severity', severity)}
-                    className={`py-2 px-3 border text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                    className={`py-2.5 sm:py-2 px-2 sm:px-3 border text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 sm:gap-2 min-h-[44px] sm:min-h-0 ${
                       isSelected
                         ? severity === 'STABLE'
                           ? 'border-emerald-500 bg-emerald-950/60 text-emerald-300 ring-1 ring-emerald-500/40'
@@ -465,7 +465,7 @@ export default function ShiftHandoffModal({
                   : 'Bedside telemetry snapshot'}
               </span>
             </div>
-            <div className="grid grid-cols-5 gap-2 text-center text-xs">
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 sm:gap-2 text-center text-xs">
               <div className="p-1.5 bg-zinc-900 border border-zinc-800">
                 <div className="text-[9px] text-zinc-500 uppercase">Heart Rate</div>
                 <div className="font-bold text-white mt-0.5">
@@ -551,11 +551,11 @@ export default function ShiftHandoffModal({
 
           {/* Action Bar */}
           <div className="pt-2 flex flex-col gap-2 border-t border-zinc-800 shrink-0">
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <button
                 type="submit"
                 disabled={loading || !currentForm.to_nurse_id}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white py-2.5 font-bold uppercase tracking-wider transition-colors text-xs"
+                className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white py-3 sm:py-2.5 font-bold uppercase tracking-wider transition-colors text-xs min-h-[44px] sm:min-h-0 flex items-center justify-center"
               >
                 {loading
                   ? 'Transferring Care...'
@@ -566,7 +566,7 @@ export default function ShiftHandoffModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 border border-zinc-700 hover:border-zinc-500 text-zinc-300 py-2.5 transition-colors text-xs"
+                className="px-4 border border-zinc-700 hover:border-zinc-500 text-zinc-300 py-3 sm:py-2.5 transition-colors text-xs min-h-[44px] sm:min-h-0 flex items-center justify-center"
               >
                 Cancel
               </button>
@@ -577,7 +577,7 @@ export default function ShiftHandoffModal({
                 type="button"
                 disabled={loading}
                 onClick={handleEndAssignmentOnly}
-                className="w-full border border-red-900/60 bg-red-950/40 hover:bg-red-900/60 text-red-300 py-2 font-mono text-[11px] uppercase tracking-wider transition-colors"
+                className="w-full border border-red-900/60 bg-red-950/40 hover:bg-red-900/60 text-red-300 py-2.5 sm:py-2 font-mono text-[11px] uppercase tracking-wider transition-colors min-h-[40px] sm:min-h-0 flex items-center justify-center"
               >
                 End Current Shift Assignment Only
               </button>
