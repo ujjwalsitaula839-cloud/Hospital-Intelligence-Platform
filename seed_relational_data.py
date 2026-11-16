@@ -44,10 +44,11 @@ if not TEST_PASSWORD_HASH:
         TEST_PASSWORD_HASH = "$2b$12$e8V9Yg2G7fWk4Xqj8t5Lbe6pQ3rA9sD1fG2hJ4kL6mN8oP0qR2sTu"
 
 # Database connection URL (must be provided via environment: SEED_DB_DSN, TEST_PG_DSN, or DATABASE_URL)
-DB_DSN = os.getenv("SEED_DB_DSN") or os.getenv("TEST_PG_DSN") or os.getenv("DATABASE_URL")
-if not DB_DSN:
+raw_dsn = os.getenv("SEED_DB_DSN") or os.getenv("TEST_PG_DSN") or os.getenv("DATABASE_URL")
+if not raw_dsn:
     print("Error: Database connection URL must be provided via SEED_DB_DSN, TEST_PG_DSN, or DATABASE_URL environment variables.")
     sys.exit(1)
+DB_DSN = raw_dsn.replace("postgresql+asyncpg://", "postgresql://")
 
 
 FIRST_NAMES_MALE = [
