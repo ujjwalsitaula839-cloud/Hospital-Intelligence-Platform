@@ -124,4 +124,21 @@ describe('Login Page', () => {
     expect(screen.getByRole('button', { name: /Administrator/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Housekeeping/i })).toBeInTheDocument();
   });
+
+  it('displays inactivity timeout alert when sessionStorage notice is present and clears storage', () => {
+    sessionStorage.setItem('hip_inactivity_notice', 'Your session timed out after 15 minutes of inactivity for HIPAA compliance.');
+
+    renderLogin();
+
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(screen.getByText(/^Session Timed Out$/i)).toBeInTheDocument();
+    expect(screen.getByText(/Your session timed out after 15 minutes of inactivity/i)).toBeInTheDocument();
+
+    // Verify it cleared sessionStorage so it doesn't reappear on subsequent visits
+    expect(sessionStorage.getItem('hip_inactivity_notice')).toBeNull();
+
+    // Verify clicking dismiss removes it from screen
+    fireEvent.click(screen.getByRole('button', { name: /Dismiss timeout notice/i }));
+    expect(screen.queryByText(/Session Timed Out/i)).not.toBeInTheDocument();
+  });
 });

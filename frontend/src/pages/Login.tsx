@@ -40,6 +40,7 @@ export default function Login(): React.ReactElement {
   const [loading, setLoading] = useState(false);
   const [shortcuts, setShortcuts] = useState<SavedShortcut[]>(DEFAULT_SHORTCUTS);
   const [isAssigningToSlot, setIsAssigningToSlot] = useState(false);
+  const [inactivityNotice, setInactivityNotice] = useState<string | null>(null);
 
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -48,6 +49,12 @@ export default function Login(): React.ReactElement {
   // Load saved shortcuts and remember-me on mount, scrubbing any password saved by older versions.
   useEffect(() => {
     try {
+      const notice = sessionStorage.getItem('hip_inactivity_notice');
+      if (notice) {
+        setInactivityNotice(notice);
+        sessionStorage.removeItem('hip_inactivity_notice');
+      }
+
       const stored = localStorage.getItem(SHORTCUTS_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as (SavedShortcut & { password?: string })[];
@@ -214,6 +221,29 @@ export default function Login(): React.ReactElement {
         </div>
 
         {/* Feedback Messages */}
+        {inactivityNotice && (
+          <div
+            role="status"
+            className="mb-4 p-3 border border-amber-600/80 bg-amber-950/70 text-amber-200 text-xs font-mono flex items-start justify-between rounded-xs"
+          >
+            <div className="flex items-start gap-2">
+              <span className="text-amber-400 font-bold" aria-hidden="true">⚠️</span>
+              <div>
+                <p className="font-semibold text-amber-100">Session Timed Out</p>
+                <p className="mt-0.5 text-amber-300/90">{inactivityNotice}</p>
+              </div>
+            </div>
+            <button
+              aria-label="Dismiss timeout notice"
+              type="button"
+              onClick={() => setInactivityNotice(null)}
+              className="text-amber-400 hover:text-white ml-2 text-sm"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {saveSuccessMsg && (
           <div className="mb-4 p-3 border border-green-700 bg-green-950/80 text-green-300 text-xs font-mono flex items-center justify-between">
             <span>{saveSuccessMsg}</span>
