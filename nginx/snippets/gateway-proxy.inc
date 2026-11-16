@@ -65,11 +65,18 @@ location /ws/ {
     proxy_pass http://hip_gateway;
 }
 
-# 4. General API Traffic — Allows parallel clinical dashboard loads while blocking floods
-location / {
+# 4. General API Traffic — Microservices & Endpoints
+location ~ ^/(api/|auth/|patients/|beds/) {
     limit_req  zone=api_general burst=60 nodelay;
     limit_conn conn_per_ip 30;
     include /etc/nginx/snippets/proxy-params.inc;
     proxy_pass http://hip_gateway;
+}
+
+# 5. Production React SPA Static Assets & Route Fallback
+location / {
+    root /usr/share/nginx/html;
+    index index.html;
+    try_files $uri $uri/ /index.html;
 }
 

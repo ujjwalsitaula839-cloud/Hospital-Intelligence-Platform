@@ -23,6 +23,7 @@ services:
       - ENABLE_DOCS=${ENABLE_DOCS:-false}
     volumes:
       - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
     networks:
       - hip-network
     depends_on:
