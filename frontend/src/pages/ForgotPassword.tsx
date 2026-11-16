@@ -76,21 +76,28 @@ export default function ForgotPassword(): React.ReactElement {
             </div>
 
             {/* Dev Inbox Helper Callout */}
-            <div className="p-3 bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-400 space-y-1">
-              <span className="text-amber-400 font-bold uppercase text-[10px]">Demo & Development Inbox</span>
-              <p>
-                In demo / dev mode, inspect your email inbox on Mailpit at{' '}
-                <a
-                  href={`http://${typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost'}:8025`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sky-400 underline hover:text-sky-300"
-                >
-                  {`http://${typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost'}:8025`}
-                </a>{' '}
-                to click the reset link.
-              </p>
-            </div>
+            {(() => {
+              const isLocalDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+              const mailpitHref = isLocalDev ? 'http://localhost:8025' : '/mail/';
+              const mailpitLabel = isLocalDev ? 'http://localhost:8025' : (typeof window !== 'undefined' ? `${window.location.origin}/mail/` : '/mail/');
+              return (
+                <div className="p-3 bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-400 space-y-1">
+                  <span className="text-amber-400 font-bold uppercase text-[10px]">Staff Email Testing Inbox</span>
+                  <p>
+                    Inspect your dispatched password reset email on Mailpit at{' '}
+                    <a
+                      href={mailpitHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sky-400 underline hover:text-sky-300"
+                    >
+                      {mailpitLabel}
+                    </a>{' '}
+                    to click the secure reset link.
+                  </p>
+                </div>
+              );
+            })()}
 
             <div className="pt-2">
               <Link

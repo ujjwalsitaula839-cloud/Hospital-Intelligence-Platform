@@ -65,6 +65,12 @@ location /ws/ {
     proxy_pass http://hip_gateway;
 }
 
+# 3.5 Mailpit Testing Inbox (Secure HTTPS Reverse Proxy & WebSockets)
+location /mail/ {
+    include /etc/nginx/snippets/proxy-params.inc;
+    proxy_pass http://hip_mailpit;
+}
+
 # 4. General API Traffic — Microservices & Endpoints
 location ~ ^/(api/|auth/|patients/|beds/) {
     limit_req  zone=api_general burst=60 nodelay;
