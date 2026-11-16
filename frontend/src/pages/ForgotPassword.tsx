@@ -77,16 +77,16 @@ export default function ForgotPassword(): React.ReactElement {
 
             {/* Dev Inbox Helper Callout */}
             <div className="p-3 bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-400 space-y-1">
-              <span className="text-amber-400 font-bold uppercase text-[10px]">Development Environment</span>
+              <span className="text-amber-400 font-bold uppercase text-[10px]">Demo & Development Inbox</span>
               <p>
-                In local dev mode, inspect your email inbox on Mailpit at{' '}
+                In demo / dev mode, inspect your email inbox on Mailpit at{' '}
                 <a
-                  href="http://localhost:8025"
+                  href={`http://${typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost'}:8025`}
                   target="_blank"
                   rel="noreferrer"
                   className="text-sky-400 underline hover:text-sky-300"
                 >
-                  http://localhost:8025
+                  {`http://${typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost'}:8025`}
                 </a>{' '}
                 to click the reset link.
               </p>
